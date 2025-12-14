@@ -1,0 +1,21 @@
+
+# Android build files
+build/
+.cxx/
+*/build/
+*/.cxx/
+
+# IDE files
+.idea/
+*.iml
+
+# Local properties
+local.properties
+
+# Keystore files
+*.jks
+*.keystore
+
+# Gradle files
+.gradle/
+captures/

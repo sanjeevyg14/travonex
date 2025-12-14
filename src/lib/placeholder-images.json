@@ -1,0 +1,100 @@
+{
+  "placeholderImages": [
+    {
+      "id": "hero1",
+      "description": "A beautiful mountain landscape at sunrise",
+      "imageUrl": "https://images.unsplash.com/photo-1595495745827-85bcc5c9a028?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3NDE5ODJ8MHwxfHNlYXJjaHw0fHxtb3VudGFpbiUyMHN1bnJpc2V8ZW58MHx8fHwxNzYzNTk0MzE1fDA&ixlib=rb-4.1.0&q=80&w=1080",
+      "imageHint": "mountain sunrise"
+    },
+    {
+      "id": "hero2",
+      "description": "A group of friends camping under a starry sky",
+      "imageUrl": "https://images.unsplash.com/photo-1499874772270-3de58565f281?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3NDE5ODJ8MHwxfHNlYXJjaHw1fHxjYW1waW5nJTIwc3RhcnN8ZW58MHx8fHwxNzYzNjE4ODE1fDA&ixlib=rb-4.1.0&q=80&w=1080",
+      "imageHint": "camping stars"
+    },
+    {
+      "id": "hero3",
+      "description": "A winding road through a vibrant autumn forest",
+      "imageUrl": "https://images.unsplash.com/photo-1627582487170-976270178b71?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3NDE5ODJ8MHwxfHNlYXJjaHw1fHxyb2FkdHJpcCUyMGF1dHVtbnxlbnwwfHx8fDE3NjM2MTg4MTV8MA&ixlib=rb-4.1.0&q=80&w=1080",
+      "imageHint": "roadtrip autumn"
+    },
+    {
+      "id": "trip1",
+      "description": "Trekking through a lush green forest with a wooden bridge",
+      "imageUrl": "https://images.unsplash.com/photo-1719000694826-77be806a29bd?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3NDE5ODJ8MHwxfHNlYXJjaHwzfHx0cmVra2luZyUyMGZvcmVzdHxlbnwwfHx8fDE3NjM2MTg4MTV8MA&ixlib-rb-4.1.0&q=80&w=1080",
+      "imageHint": "trekking forest"
+    },
+    {
+      "id": "trip2",
+      "description": "A scenic road trip along a dramatic coastline",
+      "imageUrl": "https://images.unsplash.com/photo-1609430403189-3baaecc66591?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3NDE5ODJ8MHwxfHNlYXJjaHw2fHxyb2FkdHJpcCUyMGNvYXN0fGVufDB8fHx8MTc2MzYxODgxNnww&ixlib=rb-4.1.0&q=80&w=1080",
+      "imageHint": "roadtrip coast"
+    },
+    {
+      "id": "trip3",
+      "description": "Camping with a tent by a serene alpine lake",
+      "imageUrl": "https://images.unsplash.com/photo-1628448160306-7f9a5db0b7c7?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3NDE5ODJ8MHwxfHNlYXJjaHwxMHx8Y2FtcGluZyUyMGxha2V8ZW58MHx8fHwxNzYzNjE4ODE1fDA&ixlib-rb-4.1.0&q=80&w=1080",
+      "imageHint": "camping lake"
+    },
+    {
+      "id": "trip4",
+      "description": "A weekend getaway in a cozy wooden cabin in the snow",
+      "imageUrl": "https://images.unsplash.com/photo-1622066737704-c5d990e137fb?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3NDE5ODJ8MHwxfHNlYXJjaHw3fHxjb3p5JTIwY2FiaW58ZW58MHx8fHwxNzYzNjA1NjUyfDA&ixlibrb-4.1.0&q=80&w=1080",
+      "imageHint": "cozy cabin"
+    },
+    {
+      "id": "trip5",
+      "description": "Kayaking on a crystal clear river",
+      "imageUrl": "https://images.unsplash.com/photo-1714577419068-45189e7bda58?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3NDE5ODJ8MHwxfHNlYXJjaHw2fHxrYXlha2luZyUyMHJpdmVyfGVufDB8fHx8MTc2MzUzOTQ2NHww&ixlib-rb-4.1.0&q=80&w=1080",
+      "imageHint": "kayaking river"
+    },
+    {
+      "id": "trip6",
+      "description": "Friends enjoying a bonfire at a beach campsite",
+      "imageUrl": "https://images.unsplash.com/photo-1596326270763-87f26e0f9225?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3NDE5ODJ8MHwxfHNlYXJjaHw0fHxiZWFjaCUyMGJvbmZpcmV8ZW58MHx8fHwxNzYzNTYyMzQ4fDA&ixlib-rb-4.1.0&q=80&w=1080",
+      "imageHint": "beach bonfire"
+    },
+    {
+      "id": "blog1",
+      "description": "A person writing in a travel journal with a mountain view",
+      "imageUrl": "https://images.unsplash.com/photo-1748332451680-d932cab72f16?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3NDE5ODJ8MHwxfHNlYXJjaHw2fHxqb3VybmFsJTIwbW91bnRhaW58ZW58MHx8fHwxNzYzNjE4ODE1fDA&ixlib-rb-4.1.0&q=80&w=1080",
+      "imageHint": "journal mountain"
+    },
+    {
+      "id": "blog2",
+      "description": "A backpack, compass, and a map laid out for planning",
+      "imageUrl": "https://images.unsplash.com/photo-1576695208529-54eeec65ebd9?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3NDE5ODJ8MHwxfHNlYXJjaHw1fHxiYWNrcGFjayUyMG1hcHxlbnwwfHx8fDE3NjM2MTg4MTV8MA&ixlib-rb-4.1.0&q=80&w=1080",
+      "imageHint": "backpack map"
+    },
+    {
+      "id": "blog3",
+      "description": "Close up of hiking boots on a trail",
+      "imageUrl": "https://images.unsplash.com/photo-1600100315760-ac46b65f6fdd?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3NDE5ODJ8MHwxfHNlYXJjaHw1fHxoaWtpbmclMjBib290c3xlbnwwfHx8fDE3NjM1NDQzMTh8MA&ixlib-rb-4.1.0&q=80&w=1080",
+      "imageHint": "hiking boots"
+    },
+    {
+      "id": "organizer1",
+      "description": "Portrait of a friendly trip organizer in outdoor gear",
+      "imageUrl": "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3NDE5ODJ8MHwxfHNlYXJjaHwxfHxwZXJzb24lMjBwb3J0cmFpdHxlbnwwfHx8fDE3NjM1ODUwMzd8MA&ixlib-rb-4.1.0&q=80&w=1080",
+      "imageHint": "person portrait"
+    },
+    {
+      "id": "user1",
+      "description": "Avatar of a smiling user",
+      "imageUrl": "https://images.unsplash.com/photo-1594616838951-c155f8d978a0?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3NDE5ODJ8MHwxfHNlYXJjaHw1fHxwZXJzb24lMjBhdmF0YXJ8ZW58MHx8fHwxNzYzNTU2MzU3fDA&ixlib-rb-4.1.0&q=80&w=1080",
+      "imageHint": "person avatar"
+    },
+    {
+      "id": "hero_invoice",
+      "description": "An image of an invoice",
+      "imageUrl": "https://images.unsplash.com/photo-1712145176725-673500482322?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3NDE5ODJ8MHwxfHNlYXJjaHw3fHxpbnZvaWNlJTIwZG9jdW1lbnR8ZW58MHx8fHwxNzYzNTg2NTgxfDA&ixlib-rb-4.1.0&q=80&w=1080",
+      "imageHint": "invoice document"
+    },
+    {
+      "id": "exp1",
+      "description": "A split image of someone scuba diving and someone paragliding.",
+      "imageUrl": "https://images.unsplash.com/photo-1573507712396-586c2fc99b36?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1200&q=80",
+      "imageHint": "adventure activities"
+    }
+  ]
+}
