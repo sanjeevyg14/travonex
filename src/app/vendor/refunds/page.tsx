@@ -2,7 +2,7 @@
 
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -34,23 +34,49 @@ import { Badge } from "@/components/ui/badge";
 
 export default function VendorRefundsPage() {
   const { user } = useAuth();
-  const { experienceBookings, approveExperienceRefund, rejectExperienceRefund } = useMockData();
+  const [bookings, setBookings] = useState<ExperienceBooking[]>([]);
+  const [loading, setLoading] = useState(true);
   const [actionTarget, setActionTarget] = useState<{booking: ExperienceBooking, type: 'approve' | 'reject'} | null>(null);
   const [remarks, setRemarks] = useState("");
   const [approvedAmount, setApprovedAmount] = useState<number | string>("");
   const { toast } = useToast();
   const [searchTerm, setSearchTerm] = useState("");
 
+  useEffect(() => {
+    async function fetchBookings() {
+      if (!user?.organizerId) {
+        setLoading(false);
+        return;
+      }
+
+      setLoading(true);
+      try {
+        const response = await fetch(`/api/experiences/bookings?vendorId=${user.organizerId}`, {
+          credentials: 'include',
+        });
+        if (!response.ok) throw new Error('Failed to fetch bookings');
+        const data = await response.json();
+        setBookings(data.bookings || []);
+      } catch (error) {
+        console.error("Failed to fetch experience bookings:", error);
+        toast({ variant: "destructive", title: "Error", description: "Failed to load bookings." });
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    fetchBookings();
+  }, [user?.organizerId, toast]);
+
   const { pendingRefunds, historicalRefunds } = useMemo(() => {
-    if (!user || user.role !== "organizer" || !user.organizerId) {
+    if (!user || user.role !== "organizer" || !user.organizerId || loading) {
       return { pendingRefunds: [], historicalRefunds: [] };
     }
-    // In a real app, this should also filter by organizerId
-    const pending = experienceBookings.filter(b => b.refundStatus === "requested");
-    const history = experienceBookings.filter(b => b.refundStatus && b.refundStatus !== 'requested' && b.refundStatus !== 'none');
+    const pending = bookings.filter(b => b.refundStatus === "requested");
+    const history = bookings.filter(b => b.refundStatus && b.refundStatus !== 'requested' && b.refundStatus !== 'none');
     
     return { pendingRefunds: pending, historicalRefunds: history };
-  }, [experienceBookings, user]);
+  }, [bookings, user, loading]);
 
   const filteredHistoricalRefunds = useMemo(() => {
     if (!searchTerm) return historicalRefunds;
@@ -61,7 +87,7 @@ export default function VendorRefundsPage() {
     );
   }, [historicalRefunds, searchTerm]);
 
-  const handleAction = () => {
+  const handleAction = async () => {
     if (!actionTarget) return;
 
     const { booking, type } = actionTarget;
@@ -71,14 +97,75 @@ export default function VendorRefundsPage() {
         toast({ variant: 'destructive', title: "Remarks are required for rejection."});
         return;
       }
-      rejectExperienceRefund(booking.id, remarks);
+
+      try {
+        const response = await fetch(`/api/experiences/bookings/${booking.id}/refund?action=reject`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            reason: remarks,
+          }),
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || 'Failed to reject refund');
+        }
+
+        // Refresh bookings
+        const refreshResponse = await fetch(`/api/experiences/bookings?vendorId=${user?.organizerId}`, {
+          credentials: 'include',
+        });
+        if (refreshResponse.ok) {
+          const refreshData = await refreshResponse.json();
+          setBookings(refreshData.bookings || []);
+        }
+
+        toast({ title: "Refund Rejected", description: "The refund request has been rejected." });
+      } catch (error: any) {
+        console.error("Failed to reject refund:", error);
+        toast({ variant: "destructive", title: "Error", description: error.message || "Failed to reject refund. Please try again." });
+        return;
+      }
     } else { // approve
       const finalAmount = Number(approvedAmount);
       if (isNaN(finalAmount) || finalAmount < 0 || finalAmount > booking.totalPrice) {
           toast({ variant: 'destructive', title: "Invalid Amount", description: `Amount must be between 0 and ${booking.totalPrice}.`});
           return;
       }
-      approveExperienceRefund(booking.id, finalAmount, remarks);
+
+      try {
+        const response = await fetch(`/api/experiences/bookings/${booking.id}/refund?action=approve`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            approvedAmount: finalAmount,
+            remarks: remarks,
+          }),
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || 'Failed to approve refund');
+        }
+
+        // Refresh bookings
+        const refreshResponse = await fetch(`/api/experiences/bookings?vendorId=${user?.organizerId}`, {
+          credentials: 'include',
+        });
+        if (refreshResponse.ok) {
+          const refreshData = await refreshResponse.json();
+          setBookings(refreshData.bookings || []);
+        }
+
+        toast({ title: "Refund Approved", description: "The refund request has been approved and sent to admin for processing." });
+      } catch (error: any) {
+        console.error("Failed to approve refund:", error);
+        toast({ variant: "destructive", title: "Error", description: error.message || "Failed to approve refund. Please try again." });
+        return;
+      }
     }
     
     // Reset and close

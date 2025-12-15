@@ -7,9 +7,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/hooks/use-auth";
-import { useMockData } from "@/hooks/use-mock-data";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/hooks/use-toast";
+import { Loader2 } from "lucide-react";
 import type { OrganizerApplication } from "@/lib/types";
 import { useState } from "react";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -84,67 +84,90 @@ function AgreementDialog() {
 
 export default function ExperienceVendorApplicationPage() {
     const { user, updateUser } = useAuth();
-    const { setOrganizers, addAuditLog } = useMockData();
     const router = useRouter();
     const { toast } = useToast();
     const [organizerType, setOrganizerType] = useState<'individual' | 'business'>('business');
+    const [isSubmitting, setIsSubmitting] = useState(false);
 
     async function handleSubmit(formData: FormData) {
         if (!user) return;
+        setIsSubmitting(true);
 
-        const application: OrganizerApplication = {
-            partnerType: 'experience',
-            organizerType,
-            companyName: formData.get('companyName') as string,
-            experience: formData.get('experience') as string,
-            website: formData.get('website') as string,
-            contactName: formData.get('contactName') as string,
-            contactEmail: formData.get('contactEmail') as string,
-            contactPhone: formData.get('contactPhone') as string,
-            // Business Docs
-            businessPan: (formData.get('businessPan') as File)?.name,
-            gstCertificate: (formData.get('gstCertificate') as File)?.name,
-            businessRegistration: (formData.get('businessRegistration') as File)?.name,
-            // Safety Docs
-            activityLicenses: (formData.get('activityLicenses') as File)?.name,
-            equipmentCertificates: (formData.get('equipmentCertificates') as File)?.name,
-            insuranceDocs: (formData.get('insuranceDocs') as File)?.name,
-            staffCerts: (formData.get('staffCerts') as File)?.name,
-            // Universal Doc
-            bankStatement: (formData.get('bankStatement') as File)?.name || 'not-provided.pdf'
-        };
-        
-        updateUser({ ...user, organizerApplication: application, organizerStatus: 'pending' });
+        try {
+            // Generate organizer ID
+            const organizerId = `org-exp-${user.id}`;
 
-        const newOrganizerId = `org-exp-${user.id}`; 
-        setOrganizers(prev => ({
-            ...prev,
-            [newOrganizerId]: {
-                id: newOrganizerId,
-                name: application.companyName || user.name,
-                avatar: 'organizer1',
-                isVerified: false,
-                status: 'pending',
-                partnerType: 'experience',
-                application,
+            // Prepare FormData with all fields
+            const submitFormData = new FormData();
+            submitFormData.append('partnerType', 'experience');
+            submitFormData.append('organizerType', organizerType);
+            submitFormData.append('companyName', formData.get('companyName') as string);
+            submitFormData.append('experience', formData.get('experience') as string);
+            submitFormData.append('website', formData.get('website') as string || '');
+            submitFormData.append('contactName', formData.get('contactName') as string);
+            submitFormData.append('contactEmail', formData.get('contactEmail') as string);
+            submitFormData.append('contactPhone', formData.get('contactPhone') as string);
+            submitFormData.append('bankAccountName', formData.get('bankAccountName') as string);
+            submitFormData.append('bankAccountNumber', formData.get('bankAccountNumber') as string);
+            submitFormData.append('bankIfscCode', formData.get('bankIfscCode') as string);
+
+            // Add files
+            const bankStatement = formData.get('bankStatement') as File;
+            if (bankStatement && bankStatement.size > 0) {
+                submitFormData.append('bankStatement', bankStatement);
             }
-        }));
-        
-        addAuditLog({
-            adminName: "System",
-            action: 'Organizer Application Received',
-            entityType: 'Organizer',
-            entityId: newOrganizerId,
-            entityName: application.companyName || user.name,
-            details: `New experience vendor application from ${user.name}. Sent confirmation email.`,
-        });
 
-        toast({
-            title: "Application Submitted!",
-            description: "Your application is now under review. A confirmation email with next steps has been sent to your registered email address.",
-        });
+            const businessPan = formData.get('businessPan') as File;
+            const gstCertificate = formData.get('gstCertificate') as File;
+            const businessRegistration = formData.get('businessRegistration') as File;
+            const activityLicenses = formData.get('activityLicenses') as File;
+            const equipmentCertificates = formData.get('equipmentCertificates') as File;
+            const insuranceDocs = formData.get('insuranceDocs') as File;
+            const staffCerts = formData.get('staffCerts') as File;
 
-        router.push("/dashboard");
+            if (businessPan && businessPan.size > 0) submitFormData.append('businessPan', businessPan);
+            if (gstCertificate && gstCertificate.size > 0) submitFormData.append('gstCertificate', gstCertificate);
+            if (businessRegistration && businessRegistration.size > 0) submitFormData.append('businessRegistration', businessRegistration);
+            if (activityLicenses && activityLicenses.size > 0) submitFormData.append('activityLicenses', activityLicenses);
+            if (equipmentCertificates && equipmentCertificates.size > 0) submitFormData.append('equipmentCertificates', equipmentCertificates);
+            if (insuranceDocs && insuranceDocs.size > 0) submitFormData.append('insuranceDocs', insuranceDocs);
+            if (staffCerts && staffCerts.size > 0) submitFormData.append('staffCerts', staffCerts);
+
+            // Submit to API
+            const response = await fetch(`/api/organizers/${organizerId}/application`, {
+                method: 'POST',
+                body: submitFormData,
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Failed to submit application');
+            }
+
+            // Update user context to reflect pending status immediately (optimistic UI)
+            updateUser({
+                ...user,
+                organizerId,
+                organizerStatus: 'pending',
+            });
+
+            toast({
+                title: "Application Submitted!",
+                description: "Your application is now under review. A confirmation email with next steps has been sent to your registered email address.",
+            });
+
+            router.push("/dashboard");
+
+        } catch (error: any) {
+            console.error("Application error:", error);
+            toast({
+                variant: "destructive",
+                title: "Submission Failed",
+                description: error.message || "There was an error submitting your application. Please try again.",
+            });
+        } finally {
+            setIsSubmitting(false);
+        }
     }
 
     return (
@@ -157,10 +180,10 @@ export default function ExperienceVendorApplicationPage() {
                             <CardDescription>Join Travonex to list your single-day activities, workshops, or tours.</CardDescription>
                         </CardHeader>
                         <CardContent className="space-y-8">
-                             <div className="space-y-4">
+                            <div className="space-y-4">
                                 <Label>Are you a registered business or an individual?</Label>
                                 <RadioGroup defaultValue="business" onValueChange={(value) => setOrganizerType(value as 'individual' | 'business')} className="flex gap-4">
-                                     <Label htmlFor="business" className="flex items-center gap-2 p-4 border rounded-md cursor-pointer hover:bg-muted has-[:checked]:bg-primary/10 has-[:checked]:border-primary">
+                                    <Label htmlFor="business" className="flex items-center gap-2 p-4 border rounded-md cursor-pointer hover:bg-muted has-[:checked]:bg-primary/10 has-[:checked]:border-primary">
                                         <RadioGroupItem value="business" id="business" />
                                         <span>Registered Business</span>
                                     </Label>
@@ -170,7 +193,7 @@ export default function ExperienceVendorApplicationPage() {
                                     </Label>
                                 </RadioGroup>
                             </div>
-                             <div className="space-y-2">
+                            <div className="space-y-2">
                                 <Label htmlFor="companyName">
                                     Your Name / Brand Name
                                 </Label>
@@ -202,7 +225,7 @@ export default function ExperienceVendorApplicationPage() {
                                 <Input id="website" name="website" placeholder="https://example.com" />
                             </div>
 
-                             <div className="space-y-4 rounded-lg border bg-muted/50 p-4">
+                            <div className="space-y-4 rounded-lg border bg-muted/50 p-4">
                                 <h3 className="font-semibold">Business Documents</h3>
                                 <p className="text-xs text-muted-foreground">Upload your business registration and tax documents.</p>
                                 <div className="grid md:grid-cols-2 gap-4">
@@ -214,17 +237,17 @@ export default function ExperienceVendorApplicationPage() {
                                         <Label htmlFor="gstCertificate">GST Certificate (if applicable)</Label>
                                         <Input id="gstCertificate" name="gstCertificate" type="file" />
                                     </div>
-                                     <div className="space-y-2">
+                                    <div className="space-y-2">
                                         <Label htmlFor="businessRegistration">Business Registration (if applicable)</Label>
                                         <Input id="businessRegistration" name="businessRegistration" type="file" />
                                     </div>
-                                     <div className="space-y-2">
+                                    <div className="space-y-2">
                                         <Label htmlFor="bankStatement">Bank Statement / Cancelled Cheque</Label>
                                         <Input id="bankStatement" name="bankStatement" type="file" required />
                                     </div>
                                 </div>
                             </div>
-                            
+
                             <div className="space-y-4 rounded-lg border bg-muted/50 p-4">
                                 <h3 className="font-semibold">Safety & Compliance Documents</h3>
                                 <p className="text-xs text-muted-foreground">Please upload all relevant safety and operational licenses for your activities.</p>
@@ -237,36 +260,77 @@ export default function ExperienceVendorApplicationPage() {
                                         <Label htmlFor="equipmentCertificates">Equipment Inspection Certificates</Label>
                                         <Input id="equipmentCertificates" name="equipmentCertificates" type="file" />
                                     </div>
-                                     <div className="space-y-2">
+                                    <div className="space-y-2">
                                         <Label htmlFor="insuranceDocs">Liability Insurance Documents</Label>
                                         <Input id="insuranceDocs" name="insuranceDocs" type="file" />
                                     </div>
-                                     <div className="space-y-2">
+                                    <div className="space-y-2">
                                         <Label htmlFor="staffCerts">Staff & Guide Certifications</Label>
                                         <Input id="staffCerts" name="staffCerts" type="file" />
                                     </div>
                                 </div>
                             </div>
 
+                            <div className="space-y-4 rounded-lg border bg-muted/50 p-4">
+                                <h3 className="font-semibold">Bank Account Details</h3>
+                                <p className="text-xs text-muted-foreground">For payout processing. Ensure details are accurate.</p>
+                                <div className="grid md:grid-cols-2 gap-4">
+                                    <div className="space-y-2">
+                                        <Label htmlFor="bankAccountName">Account Holder Name</Label>
+                                        <Input id="bankAccountName" name="bankAccountName" placeholder="e.g., John Doe" required />
+                                    </div>
+                                    <div className="space-y-2">
+                                        <Label htmlFor="bankAccountNumber">Account Number</Label>
+                                        <Input id="bankAccountNumber" name="bankAccountNumber" placeholder="e.g., 1234567890" required />
+                                    </div>
+                                    <div className="space-y-2">
+                                        <Label htmlFor="bankIfscCode">IFSC Code</Label>
+                                        <Input id="bankIfscCode" name="bankIfscCode" placeholder="e.g., HDFC0001234" required />
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="space-y-4 rounded-lg border bg-muted/50 p-4">
+                                <h3 className="font-semibold">Bank Account Details</h3>
+                                <p className="text-xs text-muted-foreground">For payout processing. Ensure details are accurate.</p>
+                                <div className="grid md:grid-cols-2 gap-4">
+                                    <div className="space-y-2">
+                                        <Label htmlFor="bankAccountName">Account Holder Name</Label>
+                                        <Input id="bankAccountName" name="bankAccountName" placeholder="e.g., John Doe" required />
+                                    </div>
+                                    <div className="space-y-2">
+                                        <Label htmlFor="bankAccountNumber">Account Number</Label>
+                                        <Input id="bankAccountNumber" name="bankAccountNumber" placeholder="e.g., 1234567890" required />
+                                    </div>
+                                    <div className="space-y-2">
+                                        <Label htmlFor="bankIfscCode">IFSC Code</Label>
+                                        <Input id="bankIfscCode" name="bankIfscCode" placeholder="e.g., HDFC0001234" required />
+                                    </div>
+                                </div>
+                            </div>
+
                             <div className="flex items-center space-x-2 pt-4">
-                                <Checkbox id="terms" required/>
+                                <Checkbox id="terms" required />
                                 <label
                                     htmlFor="terms"
                                     className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
                                 >
                                     I have read and agree to the{' '}
                                     <DialogTrigger asChild>
-                                         <span className="underline text-primary cursor-pointer">Vendor Onboarding Agreement</span>
+                                        <span className="underline text-primary cursor-pointer">Vendor Onboarding Agreement</span>
                                     </DialogTrigger>
                                 </label>
                             </div>
                         </CardContent>
                         <CardFooter>
-                            <Button type="submit">Submit Application</Button>
+                            <Button type="submit" disabled={isSubmitting}>
+                                {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                {isSubmitting ? "Submitting..." : "Submit Application"}
+                            </Button>
                         </CardFooter>
                     </form>
                 </Card>
-                 <AgreementDialog/>
+                <AgreementDialog />
             </div>
         </Dialog>
     );

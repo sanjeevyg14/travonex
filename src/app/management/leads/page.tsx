@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,20 +13,41 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { useMockData } from "@/hooks/use-mock-data";
+import { useState, useEffect, useMemo } from "react";
 import { Handshake, Unlock, CheckCircle } from "lucide-react";
 import type { Lead } from "@/lib/types";
 
 export default function AdminLeadsPage() {
-    const { leads } = useMockData();
+    const [leads, setLeads] = useState<Lead[]>([]);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        async function fetchLeads() {
+            setLoading(true);
+            try {
+                const response = await fetch('/api/leads', { credentials: 'include' });
+                if (!response.ok) throw new Error('Failed to fetch leads');
+                const data = await response.json();
+                setLeads(data.leads || []);
+            } catch (error) {
+                console.error("Failed to fetch leads:", error);
+            } finally {
+                setLoading(false);
+            }
+        }
+
+        fetchLeads();
+    }, []);
 
     const { totalLeads, unlockedLeads, convertedLeads } = useMemo(() => {
+        if (loading) return { totalLeads: 0, unlockedLeads: 0, convertedLeads: 0 };
+        
         return {
             totalLeads: leads.length,
             unlockedLeads: leads.filter(l => l.status === 'unlocked' || l.status === 'converted').length,
             convertedLeads: leads.filter(l => l.status === 'converted').length,
         }
-    }, [leads]);
+    }, [leads, loading]);
 
     const getStatusBadge = (status: Lead['status']) => {
         switch (status) {
@@ -79,7 +100,9 @@ export default function AdminLeadsPage() {
                             </CardContent>
                         </Card>
                     </div>
-                     {leads.length > 0 ? (
+                     {loading ? (
+                        <div className="text-center py-12">Loading leads...</div>
+                     ) : leads.length > 0 ? (
                         <Table>
                             <TableHeader>
                                 <TableRow>

@@ -91,11 +91,10 @@ export default function ProfilePage() {
     }, [user, loading, router]);
 
 
-    const handleSaveChanges = () => {
+    const handleSaveChanges = async () => {
         if (!user) return;
         
-        const updatedUser: User = {
-            ...user,
+        const updatedUserData = {
             name,
             email,
             dateOfBirth: dob ? format(dob, 'yyyy-MM-dd') : undefined,
@@ -109,11 +108,34 @@ export default function ProfilePage() {
             governmentId: (govIdType && govIdNumber) ? { type: govIdType as any, number: govIdNumber } : undefined,
         };
         
-        updateUser(updatedUser);
-        toast({
-            title: "Profile Updated",
-            description: "Your changes have been saved successfully.",
-        });
+        try {
+            const response = await fetch(`/api/users/${user.id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify(updatedUserData),
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Failed to update profile');
+            }
+
+            const data = await response.json();
+            updateUser(data.user); // Update local state
+            
+            toast({
+                title: "Profile Updated",
+                description: "Your changes have been saved successfully.",
+            });
+        } catch (error: any) {
+            console.error("Profile update error:", error);
+            toast({
+                variant: "destructive",
+                title: "Update Failed",
+                description: error.message || "Failed to update profile. Please try again.",
+            });
+        }
     };
     
     if (loading || !user) {

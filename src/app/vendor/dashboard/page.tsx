@@ -8,19 +8,15 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { DollarSign, Activity, Users, ArrowRight, PlusCircle, Edit } from "lucide-react";
 import { useExperienceAnalytics } from "@/hooks/use-experience-analytics";
 import { useAuth } from "@/hooks/use-auth";
-import { useMockData } from "@/hooks/use-mock-data";
-import { useMemo } from "react";
-import type { Experience } from "@/lib/types";
+import { useApiExperiences } from "@/hooks/use-api-experiences";
 
 export default function ExperienceVendorDashboard() {
     const { user } = useAuth();
     const { stats, recentBookings } = useExperienceAnalytics();
-    const { experiences } = useMockData();
-    
-    const organizerExperiences = useMemo(() => {
-        if (!user || user.role !== 'organizer' || !user.organizerId) return [];
-        return experiences.filter(e => e.vendor.id === user.organizerId);
-    }, [user, experiences]);
+    const { experiences, loading } = useApiExperiences({
+        vendorId: user?.organizerId,
+        autoFetch: !!user?.organizerId,
+    });
 
 
     const kpiCards = [
@@ -74,10 +70,14 @@ export default function ExperienceVendorDashboard() {
                             </TableRow>
                         </TableHeader>
                         <TableBody>
-                            {organizerExperiences.slice(0, 3).map(exp => (
+                            {loading ? (
+                                <TableRow>
+                                    <TableCell colSpan={4} className="h-24 text-center">Loading experiences...</TableCell>
+                                </TableRow>
+                            ) : experiences.slice(0, 3).map(exp => (
                                 <TableRow key={exp.id}>
                                     <TableCell className="font-medium">{exp.title}</TableCell>
-                                    <TableCell>Pending</TableCell> {/* Mock status */}
+                                    <TableCell>{exp.status || 'draft'}</TableCell>
                                     <TableCell>₹{exp.price.toLocaleString('en-IN')}</TableCell>
                                     <TableCell className="text-right">
                                         <Button asChild variant="outline" size="sm">
@@ -89,7 +89,7 @@ export default function ExperienceVendorDashboard() {
                                     </TableCell>
                                 </TableRow>
                             ))}
-                            {organizerExperiences.length === 0 && (
+                            {!loading && experiences.length === 0 && (
                                 <TableRow>
                                     <TableCell colSpan={4} className="h-24 text-center">
                                     You haven't created any experiences yet.

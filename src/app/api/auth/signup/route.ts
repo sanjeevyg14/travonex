@@ -53,10 +53,16 @@ export async function POST(req: NextRequest) {
             redeemedReferralCode: null as string | null,
         };
 
-        // 5. Handle Referral Logic Transactionally
+        // 5. Get referral bonus amount from settings (default 100)
+        const settingsRef = adminDb.collection("settings").doc("platform");
+        const settingsDoc = await settingsRef.get();
+        const referralBonusAmount = settingsDoc.data()?.referralBonusAmount || 100;
+
+        // 6. Handle Referral Logic Transactionally
         await adminDb.runTransaction(async (t) => {
             let bonusAmount = 0;
             let referrerId = null;
+            let referrerName = null;
 
             if (referralCode) {
                 const referrerQuery = await t.get(adminDb.collection("users").where("myReferralCode", "==", referralCode).limit(1));
@@ -64,24 +70,41 @@ export async function POST(req: NextRequest) {
                 if (!referrerQuery.empty) {
                     const referrerDoc = referrerQuery.docs[0];
                     referrerId = referrerDoc.id;
-                    bonusAmount = 100;
+                    referrerName = referrerDoc.data()?.name || "User";
+                    bonusAmount = referralBonusAmount;
 
+                    // Credit referrer wallet (₹100)
                     t.update(referrerDoc.ref, {
-                        walletBalance: FieldValue.increment(100)
+                        walletBalance: FieldValue.increment(referralBonusAmount)
                     });
 
+                    // Create wallet transaction for referrer
                     const referrerTxRef = adminDb.collection("wallet_transactions").doc();
                     t.set(referrerTxRef, {
                         userId: referrerId,
-                        amount: 100,
+                        amount: referralBonusAmount,
                         type: "credit",
                         description: `Referral Bonus for inviting ${name}`,
                         date: new Date().toISOString(),
                         relatedUserId: uid
                     });
+
+                    // Create referral record for admin stats
+                    const referralRef = adminDb.collection("referrals").doc();
+                    t.set(referralRef, {
+                        id: referralRef.id,
+                        referrerId: referrerId,
+                        referrerName: referrerName,
+                        referredUserId: uid,
+                        referredUserName: name,
+                        date: new Date().toISOString(),
+                        bonusAmount: referralBonusAmount * 2, // Total bonus for both users (₹200)
+                        status: "Credited"
+                    });
                 }
             }
 
+            // Credit new user wallet if referred (₹100)
             newUser.walletBalance = bonusAmount;
             if (referrerId) {
                 newUser.redeemedReferralCode = referralCode;
@@ -89,6 +112,7 @@ export async function POST(req: NextRequest) {
 
             t.set(userRef, newUser);
 
+            // Create wallet transaction for new user if referred
             if (bonusAmount > 0) {
                 const userTxRef = adminDb.collection("wallet_transactions").doc();
                 t.set(userTxRef, {

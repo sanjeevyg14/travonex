@@ -1,6 +1,12 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+
+declare global {
+    interface Window {
+        Razorpay: any;
+    }
+}
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -15,7 +21,7 @@ import { ArrowLeft, Minus, Plus, Users, Crown, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { bookingService } from "@/services/booking-service";
+import { apiPost, ApiError } from "@/lib/api-client";
 
 type CoTraveler = {
     name: string;
@@ -96,6 +102,10 @@ export function BookingForm({ trip }: { trip: Trip }) {
         });
     }
 
+    // State for Razorpay payment
+    const [razorpayOrder, setRazorpayOrder] = useState<{ id: string; amount: number; currency: string } | null>(null);
+    const [bookingId, setBookingId] = useState<string | null>(null);
+
     const handleConfirmBooking = async () => {
         if (!user) {
             toast({ variant: "destructive", title: "Please login to continue." });
@@ -103,6 +113,7 @@ export function BookingForm({ trip }: { trip: Trip }) {
             return;
         }
 
+        // Validate co-travelers
         for (let i = 0; i < coTravelers.length; i++) {
             if (!coTravelers[i].name || !coTravelers[i].gender || !coTravelers[i].email || !coTravelers[i].phone) {
                 toast({
@@ -116,40 +127,113 @@ export function BookingForm({ trip }: { trip: Trip }) {
 
         setSubmitting(true);
         try {
-            const newBooking: Booking = {
-                id: `bk_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
-                tripId: trip.id,
-                batchId,
-                tripTitle: trip.title,
-                travelerName: user.name,
-                travelerPhone: user.phone,
-                travelerId: user.id,
-                bookingDate: new Date().toISOString(),
-                totalPrice: totalPrice,
-                organizerId: trip.organizer.id,
-                numberOfTravelers: numberOfTravelers,
-                paymentType,
-                amountPaid: amountToPay,
-                balanceDue: totalPrice - amountToPay,
-                paymentStatus: paymentType === 'full' ? 'Paid in Full' : 'Reserved',
-                proDiscount: proDiscount,
-                coTravelers: coTravelers,
-            };
+            // Create booking via API
+            const response = await apiPost<{ booking: Booking; order: { id: string; amount: number; currency: string } }>(
+                '/api/bookings',
+                {
+                    tripId: trip.id,
+                    batchId,
+                    numberOfTravelers,
+                    paymentType: paymentType === 'full' ? 'Full' : 'Partial',
+                    coTravelers: coTravelers.length > 0 ? coTravelers : undefined,
+                }
+            );
 
-            await bookingService.createBooking(newBooking);
+            // Store booking ID and Razorpay order
+            const bookingIdValue = response.booking.id;
+            const order = response.order;
+            setBookingId(bookingIdValue);
+            setRazorpayOrder(order);
 
-            toast({ title: "Booking Confirmed!", description: "Redirecting to success page..." });
-            router.push(`/book/success?bookingId=${newBooking.id}`);
+            // Initialize and open Razorpay payment
+            await openRazorpayPayment(order, bookingIdValue);
         } catch (error: any) {
             console.error("Booking failed:", error);
+            const errorMessage = error instanceof ApiError ? error.message : "Failed to create booking. Please try again.";
             toast({
                 variant: "destructive",
                 title: "Booking Failed",
-                description: error.message || error.toString()
+                description: errorMessage
             });
         } finally {
             setSubmitting(false);
         }
+    };
+
+    const openRazorpayPayment = async (order: { id: string; amount: number; currency: string }, bookingId: string) => {
+        // Load Razorpay script if not already loaded
+        if (!window.Razorpay) {
+            const script = document.createElement("script");
+            script.src = "https://checkout.razorpay.com/v1/checkout.js";
+            script.async = true;
+            await new Promise((resolve, reject) => {
+                script.onload = resolve;
+                script.onerror = reject;
+                document.body.appendChild(script);
+            });
+        }
+
+        const options = {
+            key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || "",
+            amount: order.amount,
+            currency: order.currency || "INR",
+            name: "Travonex",
+            description: "Travel Booking Payment",
+            order_id: order.id,
+            handler: async (response: any) => {
+                try {
+                    // Verify payment with backend
+                    const verifyResponse = await fetch("/api/payments/verify", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        credentials: "include",
+                        body: JSON.stringify({
+                            razorpay_order_id: response.razorpay_order_id,
+                            razorpay_payment_id: response.razorpay_payment_id,
+                            razorpay_signature: response.razorpay_signature,
+                        }),
+                    });
+
+                    const verifyData = await verifyResponse.json();
+
+                    if (!verifyResponse.ok || !verifyData.verified) {
+                        throw new Error(verifyData.error || "Payment verification failed");
+                    }
+
+                    toast({
+                        title: "Payment Successful!",
+                        description: "Your booking has been confirmed.",
+                    });
+
+                    router.push(`/book/success?bookingId=${bookingId}`);
+                } catch (error: any) {
+                    console.error("Payment verification error:", error);
+                    toast({
+                        variant: "destructive",
+                        title: "Verification Failed",
+                        description: error.message || "Failed to verify payment. Please contact support.",
+                    });
+                }
+            },
+            prefill: {
+                name: user?.name || "",
+                email: user?.email || "",
+                contact: user?.phone || "",
+            },
+            theme: { color: "#3b82f6" },
+            modal: {
+                ondismiss: () => {
+                    toast({
+                        variant: "default",
+                        title: "Payment Cancelled",
+                        description: "You can complete the payment later from your bookings.",
+                    });
+                },
+            },
+        };
+
+        const razorpay = new (window as any).Razorpay(options);
+        razorpay.open();
     };
 
     const placeholder = PlaceHolderImages.find((p) => p.id === trip.image);
@@ -306,8 +390,8 @@ export function BookingForm({ trip }: { trip: Trip }) {
                             </CardContent>
                             <CardFooter>
                                 <Button size="lg" className="w-full" onClick={handleConfirmBooking} disabled={submitting}>
-                                    {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                                    {submitting ? "Processing..." : "Proceed to Payment"}
+                                    {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                    {submitting ? "Processing..." : `Confirm & Pay ₹${amountToPay.toLocaleString('en-IN')}`}
                                 </Button>
                             </CardFooter>
                         </Card>

@@ -1,9 +1,8 @@
 
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/use-auth";
-import { useMockData } from "@/hooks/use-mock-data";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Check, ShoppingCart, Star } from "lucide-react";
@@ -11,38 +10,170 @@ import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import type { LeadPackage } from "@/lib/types";
 
+declare global {
+    interface Window {
+        Razorpay: any;
+    }
+}
+
 export default function PurchaseCreditsPage() {
     const { user } = useAuth();
-    const { organizers, setOrganizers, leadPackages } = useMockData();
     const { toast } = useToast();
-    
-    // Find the current organizer based on the logged-in user.
-    const organizer = Object.values(organizers).find(o => o.name === user?.name);
+    const [organizer, setOrganizer] = useState<any>(null);
+    const [leadPackages, setLeadPackages] = useState<LeadPackage[]>([]);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        async function fetchData() {
+            if (!user?.organizerId) {
+                setLoading(false);
+                return;
+            }
+
+            setLoading(true);
+            try {
+                const [orgResponse, packagesResponse] = await Promise.all([
+                    fetch(`/api/organizers/${user.organizerId}`, { credentials: 'include' }),
+                    fetch('/api/lead-packages', { credentials: 'include' }),
+                ]);
+
+                if (orgResponse.ok) {
+                    const orgData = await orgResponse.json();
+                    setOrganizer(orgData.organizer);
+                }
+
+                if (packagesResponse.ok) {
+                    const packagesData = await packagesResponse.json();
+                    setLeadPackages(packagesData.packages || []);
+                }
+            } catch (error) {
+                console.error("Failed to fetch data:", error);
+                toast({ variant: "destructive", title: "Error", description: "Failed to load data." });
+            } finally {
+                setLoading(false);
+            }
+        }
+
+        fetchData();
+    }, [user?.organizerId, toast]);
 
     // Default the selected package to the first popular one, or the first one overall.
-    const [selectedPackage, setSelectedPackage] = useState<LeadPackage>(
-        leadPackages.find(p => p.popular) || leadPackages[0]
-    );
+    const [selectedPackage, setSelectedPackage] = useState<LeadPackage | null>(null);
 
-    const handlePurchase = () => {
-        if (!organizer || !selectedPackage) return;
+    useEffect(() => {
+        if (leadPackages.length > 0 && !selectedPackage) {
+            setSelectedPackage(leadPackages.find(p => p.popular) || leadPackages[0]);
+        }
+    }, [leadPackages, selectedPackage]);
 
-        // In a real app, this would involve a payment gateway. Here, we just simulate.
-        // The purchase history logic is removed for now but can be added later.
-        
-        // Update organizer's credits
-        setOrganizers(prev => ({
-            ...prev,
-            [organizer.id]: {
-                ...organizer,
-                leadCredits: (organizer.leadCredits || 0) + selectedPackage.credits,
+    const handlePurchase = async () => {
+        if (!organizer || !selectedPackage || !user?.organizerId) return;
+
+        try {
+            // Create purchase order
+            const response = await fetch(`/api/organizers/${user.organizerId}/credits/purchase`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({
+                    packageId: selectedPackage.id,
+                }),
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Failed to create purchase order');
             }
-        }));
 
-        toast({
-            title: "Purchase Successful!",
-            description: `${selectedPackage.credits} credits have been added to your account.`,
-        });
+            const { orderId, amount, currency, package: pkgData } = await response.json();
+
+            // Load Razorpay script if not already loaded
+            if (!window.Razorpay) {
+                const script = document.createElement("script");
+                script.src = "https://checkout.razorpay.com/v1/checkout.js";
+                script.async = true;
+                await new Promise((resolve, reject) => {
+                    script.onload = resolve;
+                    script.onerror = reject;
+                    document.body.appendChild(script);
+                });
+            }
+
+            const options = {
+                key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || "",
+                amount: amount,
+                currency: currency || "INR",
+                name: "Travonex",
+                description: `Purchase ${pkgData.credits} Lead Credits`,
+                order_id: orderId,
+                prefill: {
+                    name: organizer.name,
+                    email: user.email || "",
+                    contact: user.phone || "",
+                },
+                handler: async (response: any) => {
+                    try {
+                        // Verify payment with backend
+                        const verifyResponse = await fetch("/api/payments/verify", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            credentials: "include",
+                            body: JSON.stringify({
+                                razorpay_order_id: response.razorpay_order_id,
+                                razorpay_payment_id: response.razorpay_payment_id,
+                                razorpay_signature: response.razorpay_signature,
+                            }),
+                        });
+
+                        const verifyData = await verifyResponse.json();
+
+                        if (!verifyResponse.ok || !verifyData.verified) {
+                            throw new Error(verifyData.error || "Payment verification failed");
+                        }
+
+                        // On success, refresh organizer data to show updated credits
+                        const orgResponse = await fetch(`/api/organizers/${user.organizerId}`, {
+                            credentials: 'include',
+                        });
+                        if (orgResponse.ok) {
+                            const orgData = await orgResponse.json();
+                            setOrganizer(orgData.organizer);
+                        }
+
+                        toast({
+                            title: "Purchase Successful!",
+                            description: `${pkgData.credits} credits have been added to your account.`,
+                        });
+                    } catch (error: any) {
+                        console.error("Payment verification error:", error);
+                        toast({
+                            variant: "destructive",
+                            title: "Verification Failed",
+                            description: error.message || "Failed to verify payment. Please contact support."
+                        });
+                    }
+                },
+                modal: {
+                    ondismiss: () => {
+                        toast({
+                            variant: "destructive",
+                            title: "Payment Cancelled",
+                            description: "Payment was cancelled."
+                        });
+                    }
+                },
+            };
+
+            const razorpay = new window.Razorpay(options);
+            razorpay.open();
+        } catch (error: any) {
+            console.error("Purchase failed:", error);
+            toast({
+                variant: "destructive",
+                title: "Purchase Failed",
+                description: error.message || "Failed to initiate purchase. Please try again."
+            });
+        }
     };
 
     return (
@@ -69,8 +200,8 @@ export default function PurchaseCreditsPage() {
                 </CardHeader>
                 <CardContent className="grid md:grid-cols-3 gap-6">
                     {leadPackages.map(pkg => (
-                        <Card 
-                            key={pkg.id} 
+                        <Card
+                            key={pkg.id}
                             className={cn(
                                 "cursor-pointer relative flex flex-col",
                                 selectedPackage?.id === pkg.id && "border-2 border-primary"
@@ -116,7 +247,7 @@ export default function PurchaseCreditsPage() {
                             <span>Package: {selectedPackage.name} ({selectedPackage.credits} credits)</span>
                             <span>₹{selectedPackage.price}</span>
                         </div>
-                         <ul className="space-y-2 text-sm text-muted-foreground">
+                        <ul className="space-y-2 text-sm text-muted-foreground">
                             <li className="flex items-center gap-2">
                                 <Check className="h-4 w-4 text-green-500" />
                                 Unlock contact details of interested travelers.
@@ -125,7 +256,7 @@ export default function PurchaseCreditsPage() {
                                 <Check className="h-4 w-4 text-green-500" />
                                 Credit back guarantee if a lead converts to a booking.
                             </li>
-                             <li className="flex items-center gap-2">
+                            <li className="flex items-center gap-2">
                                 <Check className="h-4 w-4 text-green-500" />
                                 Credits never expire.
                             </li>

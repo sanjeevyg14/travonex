@@ -10,8 +10,8 @@ import { useEffect, useState, useMemo } from "react";
 import type { Booking, Trip } from "@/lib/types";
 import { useToast } from "@/hooks/use-toast";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { bookingService } from "@/services/booking-service";
-import { tripService } from "@/services/trip-service";
+import { useApiBookings } from "@/hooks/use-api-bookings";
+import { useApiTrips } from "@/hooks/use-api-trips";
 
 export default function DashboardPage() {
     const { user, loading: authLoading } = useAuth();
@@ -76,7 +76,7 @@ export default function DashboardPage() {
     // Derived from user.myReferralCode now, not just referralCode field which might be unused
     const referralCode = user?.myReferralCode || "Generate One via Profile";
 
-    if (authLoading || loadingData || !user || user.role !== 'traveler') {
+    if (authLoading || (loadingData && bookingsLoading) || !user || user.role !== 'traveler') {
         return <div className="container py-12 flex justify-center"><Loader2 className="h-8 w-8 animate-spin" /></div>;
     }
 

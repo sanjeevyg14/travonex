@@ -2,7 +2,7 @@
 
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,8 +14,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { useMockData } from "@/hooks/use-mock-data";
-import type { Booking } from "@/lib/types";
+import type { Booking, Trip, Organizer } from "@/lib/types";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Search, DollarSign, BookOpen, Banknote, ArrowUpDown, Download, MoreHorizontal, Calendar as CalendarIcon, MessageSquare, Eye, Users, Phone, Mail, CircleUser } from "lucide-react";
@@ -99,9 +98,12 @@ type EnrichedAdminBooking = Booking & {
 };
 
 export default function AdminAllBookingsPage() {
-    const { bookings, trips, organizers, addAuditLog } = useMockData();
     const { toast } = useToast();
     const { stats } = useAdminAnalytics();
+    const [bookings, setBookings] = useState<Booking[]>([]);
+    const [trips, setTrips] = useState<Trip[]>([]);
+    const [organizers, setOrganizers] = useState<Record<string, Organizer>>({});
+    const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState("");
     const [statusFilter, setStatusFilter] = useState("all");
     const [sortConfig, setSortConfig] = useState<{ key: SortableKeys; direction: 'asc' | 'desc' }>({ key: 'bookingDate', direction: 'desc' });
@@ -110,16 +112,56 @@ export default function AdminAllBookingsPage() {
     const [cancellationRemarks, setCancellationRemarks] = useState("");
     const [viewingBooking, setViewingBooking] = useState<EnrichedAdminBooking | null>(null);
 
+    useEffect(() => {
+        async function fetchData() {
+            setLoading(true);
+            try {
+                // Fetch all bookings
+                const bookingsResponse = await fetch('/api/bookings', { credentials: 'include' });
+                if (!bookingsResponse.ok) throw new Error('Failed to fetch bookings');
+                const bookingsData = await bookingsResponse.json();
+                setBookings(bookingsData.bookings || []);
+
+                // Fetch all trips
+                const tripsResponse = await fetch('/api/trips', { credentials: 'include' });
+                if (!tripsResponse.ok) throw new Error('Failed to fetch trips');
+                const tripsData = await tripsResponse.json();
+                setTrips(tripsData.trips || []);
+
+                // Fetch all organizers
+                const organizersResponse = await fetch('/api/organizers', { credentials: 'include' });
+                if (!organizersResponse.ok) throw new Error('Failed to fetch organizers');
+                const organizersData = await organizersResponse.json();
+                
+                // Convert array to object keyed by ID
+                const organizersMap: Record<string, Organizer> = {};
+                (organizersData.organizers || []).forEach((org: Organizer) => {
+                    organizersMap[org.id] = org;
+                });
+                setOrganizers(organizersMap);
+            } catch (error) {
+                console.error("Failed to fetch admin data:", error);
+                toast({ variant: "destructive", title: "Error", description: "Failed to load data." });
+            } finally {
+                setLoading(false);
+            }
+        }
+
+        fetchData();
+    }, [toast]);
+
     const enrichedBookings = useMemo((): EnrichedAdminBooking[] => {
+        if (loading) return [];
+        
         return bookings.map(booking => {
             const trip = trips.find(t => t.id === booking.tripId);
-            const organizer = trip ? organizers[trip.organizer.id] : null;
+            const organizer = trip ? organizers[trip.organizer?.id || ''] : null;
             return {
                 ...booking,
                 organizerName: organizer?.name || "N/A",
             };
         });
-    }, [bookings, trips, organizers]);
+    }, [bookings, trips, organizers, loading]);
 
     const filteredBookings = useMemo(() => {
         let filtered = enrichedBookings;
@@ -233,7 +275,7 @@ export default function AdminAllBookingsPage() {
         }
     };
     
-    const handleCancelBooking = () => {
+    const handleCancelBooking = async () => {
         if (!cancellationTarget || !cancellationRemarks) {
              toast({
                 variant: 'destructive',
@@ -243,24 +285,44 @@ export default function AdminAllBookingsPage() {
             return;
         }
 
-        // In a real app, this would be an API call.
-        // For now, we simulate it.
-        addAuditLog({
-            adminName: 'Admin',
-            action: 'Refund Processed by Admin',
-            entityType: 'Booking',
-            entityId: cancellationTarget.id,
-            entityName: cancellationTarget.tripTitle,
-            details: `Admin cancelled booking. Reason: ${cancellationRemarks}`
-        });
+        try {
+            const response = await fetch(`/api/bookings/${cancellationTarget.id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ 
+                    paymentStatus: 'Cancelled',
+                    cancellationReason: cancellationRemarks,
+                }),
+            });
 
-        toast({
-            title: 'Booking Cancelled',
-            description: `The booking for ${cancellationTarget.travelerName} has been cancelled.`,
-        });
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Failed to cancel booking');
+            }
 
-        setCancellationTarget(null);
-        setCancellationRemarks("");
+            // Refresh bookings
+            const refreshResponse = await fetch('/api/bookings', { credentials: 'include' });
+            if (refreshResponse.ok) {
+                const refreshData = await refreshResponse.json();
+                setBookings(refreshData.bookings || []);
+            }
+
+            toast({
+                title: 'Booking Cancelled',
+                description: `The booking for ${cancellationTarget.travelerName} has been cancelled.`,
+            });
+
+            setCancellationTarget(null);
+            setCancellationRemarks("");
+        } catch (error: any) {
+            console.error("Failed to cancel booking:", error);
+            toast({
+                variant: 'destructive',
+                title: 'Cancellation Failed',
+                description: error.message || 'Failed to cancel booking. Please try again.',
+            });
+        }
     }
 
     return (

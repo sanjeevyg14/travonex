@@ -14,8 +14,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useAuth } from "@/hooks/use-auth";
-import { useMockData } from "@/hooks/use-mock-data";
-import { useMemo, useState } from "react";
+import { useApiTrips } from "@/hooks/use-api-trips";
+import { useMemo, useState, useEffect } from "react";
 import type { Booking, Trip, Batch } from "@/lib/types";
 import {
   Dialog,
@@ -40,8 +40,73 @@ export type EnrichedBooking = Booking & {
 
 export default function TripBookingDashboard() {
     const { user } = useAuth();
-    const { bookings, organizers, trips } = useMockData();
+    const [allBookings, setAllBookings] = useState<Booking[]>([]);
+    const [bookingsLoading, setBookingsLoading] = useState(true);
+
+    useEffect(() => {
+        async function fetchOrganizerBookings() {
+            if (!user?.organizerId) {
+                setBookingsLoading(false);
+                return;
+            }
+
+            setBookingsLoading(true);
+            try {
+                const response = await fetch(`/api/bookings?organizerId=${user.organizerId}`, {
+                    credentials: 'include',
+                });
+                if (!response.ok) throw new Error('Failed to fetch bookings');
+                const data = await response.json();
+                setAllBookings(data.bookings || []);
+            } catch (error) {
+                console.error("Failed to fetch bookings:", error);
+            } finally {
+                setBookingsLoading(false);
+            }
+        }
+
+        fetchOrganizerBookings();
+    }, [user?.organizerId]);
+    const { fetchTrip } = useApiTrips({ autoFetch: false });
     const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null);
+    const [enrichedBookings, setEnrichedBookings] = useState<EnrichedBooking[]>([]);
+
+    // Enrich bookings with trip and batch data
+    useEffect(() => {
+        async function enrichBookings() {
+            if (!allBookings.length) {
+                setEnrichedBookings([]);
+                return;
+            }
+
+            const enriched: EnrichedBooking[] = [];
+            for (const booking of allBookings) {
+                try {
+                    const trip = await fetchTrip(booking.tripId);
+                    const batch = trip?.batches?.find(b => b.id === booking.batchId);
+                    const enrichedBooking: EnrichedBooking = { ...booking, trip, batch };
+                    
+                    // Check for cancellation
+                    if (booking.paymentStatus === "Reserved" && trip?.balanceDueDays !== undefined && batch) {
+                        const startDate = new Date(batch.startDate);
+                        const dueDate = new Date(startDate.setDate(startDate.getDate() - trip.balanceDueDays));
+                        if (isBefore(dueDate, new Date())) {
+                            enrichedBooking.isCancelled = true;
+                        }
+                    }
+                    enriched.push(enrichedBooking);
+                } catch (error) {
+                    console.error(`Failed to fetch trip for booking ${booking.id}:`, error);
+                    enriched.push({ ...booking, trip: undefined, batch: undefined });
+                }
+            }
+            setEnrichedBookings(enriched);
+        }
+
+        if (!bookingsLoading) {
+            enrichBookings();
+        }
+    }, [allBookings, fetchTrip, bookingsLoading]);
 
     const {
         upcomingBookings,
@@ -51,33 +116,16 @@ export default function TripBookingDashboard() {
         totalBookingsCount
     } = useMemo(() => {
         if (!user || user.role !== 'organizer' || !user.organizerId) {
-        return { upcomingBookings: [], pastBookings: [], totalRevenue: 0, pendingPayments: 0, totalBookingsCount: 0 };
+            return { upcomingBookings: [], pastBookings: [], totalRevenue: 0, pendingPayments: 0, totalBookingsCount: 0 };
         }
         
-        const organizerBookings = bookings.filter(booking => booking.organizerId === user.organizerId);
-        
-        const revenue = organizerBookings.reduce((acc, b) => acc + b.amountPaid, 0);
-        const pending = organizerBookings.reduce((acc, b) => acc + b.balanceDue, 0);
+        const revenue = enrichedBookings.reduce((acc, b) => acc + b.amountPaid, 0);
+        const pending = enrichedBookings.reduce((acc, b) => acc + b.balanceDue, 0);
         
         const now = new Date();
         const today = startOfDay(now);
         const upcoming: EnrichedBooking[] = [];
         const past: EnrichedBooking[] = [];
-
-        const enrichedBookings: EnrichedBooking[] = organizerBookings.map(booking => {
-        const trip = trips.find(t => t.id === booking.tripId);
-        const batch = trip?.batches?.find(b => b.id === booking.batchId);
-        
-        const enrichedBooking: EnrichedBooking = { ...booking, trip, batch };
-        if (booking.paymentStatus === "Reserved" && trip?.balanceDueDays !== undefined && batch) {
-                const startDate = new Date(batch.startDate);
-                const dueDate = new Date(startDate.setDate(startDate.getDate() - trip.balanceDueDays));
-                if (isBefore(dueDate, now)) {
-                enrichedBooking.isCancelled = true;
-                }
-            }
-        return enrichedBooking;
-        });
 
         for (const booking of enrichedBookings) {
             if (!booking.batch) {

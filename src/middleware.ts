@@ -8,6 +8,7 @@ export async function middleware(request: NextRequest) {
     const isProtectedRoute =
         request.nextUrl.pathname.startsWith("/management") ||
         request.nextUrl.pathname.startsWith("/organizer") ||
+        request.nextUrl.pathname.startsWith("/vendor") ||
         request.nextUrl.pathname.startsWith("/api/protected");
 
     if (isProtectedRoute && !session) {
@@ -28,5 +29,5 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-    matcher: ["/management/:path*", "/organizer/:path*", "/api/protected/:path*"],
+    matcher: ["/management/:path*", "/organizer/:path*", "/vendor/:path*", "/api/protected/:path*"],
 };

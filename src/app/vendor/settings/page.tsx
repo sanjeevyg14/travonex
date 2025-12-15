@@ -10,7 +10,6 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
-import { useMockData } from "@/hooks/use-mock-data";
 import type { OrganizerApplication } from "@/lib/types";
 import { Separator } from "@/components/ui/separator";
 import { AlertCircle, Download } from "lucide-react";
@@ -98,48 +97,155 @@ function ApplicationDetails({ application }: { application: OrganizerApplication
 export default function VendorSettingsPage() {
     const { user } = useAuth();
     const { toast } = useToast();
-    const { commissionRate, organizers, setOrganizers } = useMockData();
     const fileInputRef = useRef<HTMLInputElement>(null);
-
-    const currentOrganizer = useMemo(() => {
-        if (!user || !user.organizerId) return null;
-        return organizers[user.organizerId] || null;
-    }, [user, organizers]);
-    
-    // State is now only for fields that can be edited.
+    const [currentOrganizer, setCurrentOrganizer] = useState<any>(null);
+    const [loading, setLoading] = useState(true);
+    const [commissionRate, setCommissionRate] = useState(10);
     const [publicBio, setPublicBio] = useState("");
-    
-    // Use useEffect to set initial state once the currentOrganizer is loaded.
+    const [saving, setSaving] = useState(false);
+
     useEffect(() => {
-        if (currentOrganizer) {
-            setPublicBio(currentOrganizer.bio || "");
-        }
-    }, [currentOrganizer]);
-
-
-    const organizerAvatar = PlaceHolderImages.find((p) => p.id === currentOrganizer?.avatar);
-
-    const handleSaveChanges = () => {
-        if (!currentOrganizer) return;
-        setOrganizers(prev => ({
-            ...prev,
-            [currentOrganizer.id]: {
-                ...currentOrganizer,
-                bio: publicBio, // Only update the bio
+        async function fetchData() {
+            if (!user?.organizerId) {
+                setLoading(false);
+                return;
             }
-        }));
-        toast({
-            title: "Profile Updated",
-            description: "Your public profile bio has been saved.",
-        });
+
+            setLoading(true);
+            try {
+                const [orgResponse, settingsResponse] = await Promise.all([
+                    fetch(`/api/organizers/${user.organizerId}`, { credentials: 'include' }),
+                    fetch('/api/settings', { credentials: 'include' }),
+                ]);
+
+                if (orgResponse.ok) {
+                    const orgData = await orgResponse.json();
+                    setCurrentOrganizer(orgData.organizer);
+                    setPublicBio(orgData.organizer?.bio || "");
+                }
+
+                if (settingsResponse.ok) {
+                    const settingsData = await settingsResponse.json();
+                    setCommissionRate(settingsData.settings?.commissionRate || 10);
+                }
+            } catch (error) {
+                console.error("Failed to fetch data:", error);
+                toast({ variant: "destructive", title: "Error", description: "Failed to load organizer data." });
+            } finally {
+                setLoading(false);
+            }
+        }
+
+        fetchData();
+    }, [user?.organizerId, toast]);
+
+    const organizerAvatar = currentOrganizer?.avatar ? PlaceHolderImages.find((p) => p.id === currentOrganizer.avatar) : null;
+
+    const handleSaveChanges = async () => {
+        if (!currentOrganizer || !user?.organizerId) return;
+
+        setSaving(true);
+        try {
+            const response = await fetch(`/api/organizers/${user.organizerId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({
+                    bio: publicBio,
+                }),
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Failed to update organizer');
+            }
+
+            // Refresh organizer data
+            const orgResponse = await fetch(`/api/organizers/${user.organizerId}`, {
+                credentials: 'include',
+            });
+            if (orgResponse.ok) {
+                const orgData = await orgResponse.json();
+                setCurrentOrganizer(orgData.organizer);
+            }
+
+            toast({
+                title: "Profile Updated",
+                description: "Your public profile bio has been saved.",
+            });
+        } catch (error: any) {
+            console.error("Failed to save changes:", error);
+            toast({
+                variant: "destructive",
+                title: "Error",
+                description: error.message || "Failed to update profile. Please try again."
+            });
+        } finally {
+            setSaving(false);
+        }
     };
 
-    const handleLogoChange = () => {
-        toast({
-            title: "Logo Updated",
-            description: "Your new logo has been saved.",
-        });
+    const handleLogoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file || !user?.organizerId) return;
+
+        try {
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('folder', 'organizers');
+
+            const response = await fetch('/api/upload', {
+                method: 'POST',
+                credentials: 'include',
+                body: formData,
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Failed to upload logo');
+            }
+
+            const { url } = await response.json();
+
+            // Update organizer with new logo URL
+            const updateResponse = await fetch(`/api/organizers/${user.organizerId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({
+                    avatar: url,
+                }),
+            });
+
+            if (updateResponse.ok) {
+                const orgData = await updateResponse.json();
+                setCurrentOrganizer(orgData.organizer);
+                toast({
+                    title: "Logo Updated",
+                    description: "Your new logo has been saved.",
+                });
+            }
+        } catch (error: any) {
+            console.error("Failed to upload logo:", error);
+            toast({
+                variant: "destructive",
+                title: "Error",
+                description: error.message || "Failed to upload logo. Please try again."
+            });
+        }
     };
+
+    if (loading) {
+        return (
+            <div className="container py-12">
+                <Card>
+                    <CardHeader>
+                        <CardTitle>Loading...</CardTitle>
+                    </CardHeader>
+                </Card>
+            </div>
+        );
+    }
 
     if (!currentOrganizer) {
         return (
@@ -189,7 +295,9 @@ export default function VendorSettingsPage() {
                     </div>
                 </CardContent>
                 <CardFooter>
-                    <Button onClick={handleSaveChanges}>Save Profile</Button>
+                    <Button onClick={handleSaveChanges} disabled={saving}>
+                        {saving ? "Saving..." : "Save Profile"}
+                    </Button>
                 </CardFooter>
             </Card>
 

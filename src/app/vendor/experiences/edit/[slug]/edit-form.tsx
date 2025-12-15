@@ -1,24 +1,65 @@
 "use client";
 
-import { useMockData } from "@/hooks/use-mock-data";
-import NewExperiencePage from "../../new/page"; // Re-use the NewExperiencePage component
+import NewExperiencePage from "../../new/page";
 import { notFound, useParams } from "next/navigation";
+import { useState, useEffect } from "react";
 import type { Experience } from "@/lib/types";
 
-
-export default function EditExperienceForm({ experienceToEdit: initialExperience }: { experienceToEdit: Experience }) {
+export default function EditExperienceForm({ experienceToEdit: initialExperience }: { experienceToEdit?: Experience } = {}) {
   const params = useParams();
   const slug = params.slug as string;
-  const { experiences } = useMockData();
-  
-  // The initial data is passed as a prop, but we find the live version from context
-  // to ensure any updates are reflected. Fallback to initial data if not found.
-  const experienceToEdit = experiences.find(e => e.slug === slug) || initialExperience;
+  const [experienceToEdit, setExperienceToEdit] = useState<Experience | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function fetchExperience() {
+      if (initialExperience) {
+        setExperienceToEdit(initialExperience);
+        setLoading(false);
+        return;
+      }
+
+      try {
+        // First, get all experiences for this vendor to find by slug
+        const response = await fetch('/api/experiences', {
+          credentials: 'include',
+        });
+        if (!response.ok) throw new Error('Failed to fetch experiences');
+        const data = await response.json();
+        const exp = data.experiences?.find((e: Experience) => e.slug === slug);
+        
+        if (exp) {
+          // Fetch full experience details by ID
+          const expResponse = await fetch(`/api/experiences/${exp.id}`, {
+            credentials: 'include',
+          });
+          if (expResponse.ok) {
+            const expData = await expResponse.json();
+            setExperienceToEdit(expData.experience);
+          } else {
+            setExperienceToEdit(null);
+          }
+        } else {
+          setExperienceToEdit(null);
+        }
+      } catch (error) {
+        console.error("Failed to fetch experience:", error);
+        setExperienceToEdit(null);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    fetchExperience();
+  }, [slug, initialExperience]);
+
+  if (loading) {
+    return <div className="container py-12">Loading experience...</div>;
+  }
 
   if (!experienceToEdit) {
     notFound();
   }
 
-  // Render the NewExperiencePage but pass the existing experience data as a prop
   return <NewExperiencePage experienceToEdit={experienceToEdit} />;
 }

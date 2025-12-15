@@ -14,7 +14,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useMockData } from "@/hooks/use-mock-data";
 import { useToast } from "@/hooks/use-toast";
 import type { Trip, Batch } from "@/lib/types";
 import { useMemo, useState } from "react";
@@ -68,7 +67,26 @@ function RejectionDialog({ trip, onConfirm }: { trip: Trip, onConfirm: (tripId: 
 }
 
 export default function AdminTripsPage() {
-  const { trips, setTrips, bookings, addAuditLog } = useMockData();
+  const { trips, loading: tripsLoading, fetchTrips } = useApiTrips({ autoFetch: true });
+  const [bookings, setBookings] = useState<Booking[]>([]);
+  const [bookingsLoading, setBookingsLoading] = useState(true);
+
+  useEffect(() => {
+    async function fetchAllBookings() {
+      setBookingsLoading(true);
+      try {
+        const response = await fetch('/api/bookings', { credentials: 'include' });
+        if (!response.ok) throw new Error('Failed to fetch bookings');
+        const data = await response.json();
+        setBookings(data.bookings || []);
+      } catch (error) {
+        console.error("Failed to fetch bookings:", error);
+      } finally {
+        setBookingsLoading(false);
+      }
+    }
+    fetchAllBookings();
+  }, []);
   const { user } = useAuth();
   const { toast } = useToast();
   const [currentTab, setCurrentTab] = useState("pending");
@@ -76,10 +94,12 @@ export default function AdminTripsPage() {
   const [rejectionTarget, setRejectionTarget] = useState<Trip | null>(null);
 
   const enrichedTrips = useMemo((): EnrichedAdminTrip[] => {
+    if (tripsLoading || bookingsLoading) return [];
+    
     return trips.map(trip => {
         const tripBookings = bookings.filter(b => b.tripId === trip.id);
-        const totalTravelers = tripBookings.reduce((sum, b) => sum + b.numberOfTravelers, 0);
-        const totalRevenue = tripBookings.reduce((sum, b) => sum + b.totalPrice, 0);
+        const totalTravelers = tripBookings.reduce((sum, b) => sum + (b.numberOfTravelers || 0), 0);
+        const totalRevenue = tripBookings.reduce((sum, b) => sum + (b.totalPrice || 0), 0);
         
         // An active deal exists if a batch has the deal flag and is currently active.
         const activeDealBatch = trip.batches?.find(b => b.isLastMinuteDeal && b.status === 'Active');
@@ -91,7 +111,7 @@ export default function AdminTripsPage() {
             activeDealBatch,
         }
     })
-  }, [trips, bookings]);
+  }, [trips, bookings, tripsLoading, bookingsLoading]);
 
   const filteredTrips = useMemo(() => {
     let tripsByStatus: EnrichedAdminTrip[];
@@ -111,56 +131,104 @@ export default function AdminTripsPage() {
   }, [enrichedTrips, currentTab, searchTerm]);
 
   const { totalTrips, publishedTrips, pendingApprovals, totalDeals } = useMemo(() => {
+    if (tripsLoading) {
+      return { totalTrips: 0, publishedTrips: 0, pendingApprovals: 0, totalDeals: 0 };
+    }
     return {
         totalTrips: trips.length,
         publishedTrips: trips.filter(t => t.status === 'published').length,
         pendingApprovals: trips.filter(t => t.status === 'pending').length,
         totalDeals: enrichedTrips.filter(t => t.activeDealBatch).length,
     }
-  }, [trips, enrichedTrips]);
+  }, [trips, enrichedTrips, tripsLoading]);
 
 
-  const handleApprove = (tripId: string) => {
+  const handleApprove = async (tripId: string) => {
     const trip = trips.find(t => t.id === tripId);
     if (!trip || !user) return;
     
-    setTrips(currentTrips => currentTrips.map(t => 
-      t.id === tripId ? { ...t, status: 'published', adminRemarks: undefined } : t
-    ));
-    addAuditLog({
-        adminName: user.name,
-        action: 'Trip Approved',
-        entityType: 'Trip',
-        entityId: tripId,
-        entityName: trip.title,
-    });
-    toast({ title: "Trip Approved", description: "The trip is now live on the platform." });
+    try {
+      const response = await fetch(`/api/admin/trips/${tripId}/approve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ action: 'approve' }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to approve trip');
+      }
+
+      // Refresh trips list
+      await fetchTrips();
+      toast({ title: "Trip Approved", description: "The trip is now live on the platform." });
+    } catch (error: any) {
+      console.error("Failed to approve trip:", error);
+      toast({ 
+        variant: "destructive", 
+        title: "Approval Failed", 
+        description: error.message || "Failed to approve trip. Please try again." 
+      });
+    }
   };
   
-  const handleReject = (tripId: string, remarks: string) => {
-     const trip = trips.find(t => t.id === tripId);
+  const handleReject = async (tripId: string, remarks: string) => {
+    const trip = trips.find(t => t.id === tripId);
     if (!trip || !user) return;
 
-    setTrips(currentTrips => currentTrips.map(t => 
-      t.id === tripId ? { ...t, status: 'draft', adminRemarks: remarks } : t
-    ));
-    addAuditLog({
-        adminName: user.name,
-        action: 'Trip Rejected',
-        entityType: 'Trip',
-        entityId: tripId,
-        entityName: trip.title,
-        details: remarks,
-    });
-    toast({ variant: "destructive", title: "Trip Rejected", description: "The trip has been moved to drafts with your feedback." });
-    setRejectionTarget(null);
+    try {
+      const response = await fetch(`/api/admin/trips/${tripId}/approve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ action: 'reject', remarks }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to reject trip');
+      }
+
+      // Refresh trips list
+      await fetchTrips();
+      toast({ variant: "destructive", title: "Trip Rejected", description: "The trip has been moved to drafts with your feedback." });
+      setRejectionTarget(null);
+    } catch (error: any) {
+      console.error("Failed to reject trip:", error);
+      toast({ 
+        variant: "destructive", 
+        title: "Rejection Failed", 
+        description: error.message || "Failed to reject trip. Please try again." 
+      });
+    }
   };
   
-  const handleSuspend = (tripId: string) => {
-    setTrips(currentTrips => currentTrips.map(t => 
-      t.id === tripId ? { ...t, status: 'draft' } : t
-    ));
-     toast({ variant: "destructive", title: "Trip Suspended", description: "The trip is no longer visible to travelers." });
+  const handleSuspend = async (tripId: string) => {
+    try {
+      const response = await fetch(`/api/trips/${tripId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ status: 'draft' }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to suspend trip');
+      }
+
+      // Refresh trips list
+      await fetchTrips();
+      toast({ variant: "destructive", title: "Trip Suspended", description: "The trip is no longer visible to travelers." });
+    } catch (error: any) {
+      console.error("Failed to suspend trip:", error);
+      toast({ 
+        variant: "destructive", 
+        title: "Suspension Failed", 
+        description: error.message || "Failed to suspend trip. Please try again." 
+      });
+    }
   };
   
    const kpiCards = [

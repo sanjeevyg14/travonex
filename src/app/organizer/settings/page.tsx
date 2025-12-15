@@ -10,7 +10,6 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
-import { useMockData } from "@/hooks/use-mock-data";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import type { Organizer, OrganizerApplication } from "@/lib/types";
 import { Separator } from "@/components/ui/separator";
@@ -20,99 +19,151 @@ import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { PlaceHolderImages } from "@/lib/placeholder-images";
 
 function ApplicationDetails({ application }: { application: OrganizerApplication | undefined }) {
-  if (!application) {
-    return <p className="text-muted-foreground">No application data found for this organizer.</p>
-  }
-    
-  const DocumentLink = ({ fileName }: { fileName: string | undefined }) => {
-    if (!fileName) return <span className="text-muted-foreground">Not Provided</span>;
-    return (
-        <a href="#" className="flex items-center gap-2 text-primary hover:underline" onClick={(e) => e.preventDefault()}>
-            <Download className="h-4 w-4" />
-            <span>{fileName}</span>
-        </a>
-    )
-  }
+    if (!application) {
+        return <p className="text-muted-foreground">No application data found for this organizer.</p>
+    }
 
-  return (
-    <div className="space-y-4 text-sm">
-        <div className="grid grid-cols-2 gap-2">
-            <div>
-                <Label className="text-muted-foreground">Brand/Company Name</Label>
-                <p className="font-medium">{application.companyName}</p>
+    const DocumentLink = ({ fileName }: { fileName: string | undefined }) => {
+        if (!fileName) return <span className="text-muted-foreground">Not Provided</span>;
+        return (
+            <a href="#" className="flex items-center gap-2 text-primary hover:underline" onClick={(e) => e.preventDefault()}>
+                <Download className="h-4 w-4" />
+                <span>{fileName}</span>
+            </a>
+        )
+    }
+
+    return (
+        <div className="space-y-4 text-sm">
+            <div className="grid grid-cols-2 gap-2">
+                <div>
+                    <Label className="text-muted-foreground">Brand/Company Name</Label>
+                    <p className="font-medium">{application.companyName}</p>
+                </div>
+                <div>
+                    <Label className="text-muted-foreground">Organizer Type</Label>
+                    <p className="font-medium capitalize">{application.organizerType}</p>
+                </div>
             </div>
             <div>
-                <Label className="text-muted-foreground">Organizer Type</Label>
-                <p className="font-medium capitalize">{application.organizerType}</p>
+                <Label className="text-muted-foreground">Website/Social</Label>
+                <p className="font-medium">{application.website || 'Not Provided'}</p>
             </div>
+            <div>
+                <h4 className="font-semibold mb-2">KYC Documents Submitted</h4>
+                <ul className="list-disc list-inside text-muted-foreground space-y-1">
+                    {application.organizerType === 'individual' ? (
+                        <>
+                            <li>PAN Card: <DocumentLink fileName={application.panCard} /></li>
+                            <li>ID Proof: <DocumentLink fileName={application.idProof} /></li>
+                            <li>Bank Statement: <DocumentLink fileName={application.bankStatement} /></li>
+                        </>
+                    ) : (
+                        <>
+                            <li>Business PAN: <DocumentLink fileName={application.businessPan} /></li>
+                            <li>GST Certificate: <DocumentLink fileName={application.gstCertificate} /></li>
+                            <li>Business Registration: <DocumentLink fileName={application.businessRegistration} /></li>
+                            <li>Bank Statement: <DocumentLink fileName={application.bankStatement} /></li>
+                        </>
+                    )}
+                </ul>
+            </div>
+            <Separator className="my-4" />
+            <Button variant="outline">View Onboarding Agreement</Button>
         </div>
-      <div>
-        <Label className="text-muted-foreground">Website/Social</Label>
-        <p className="font-medium">{application.website || 'Not Provided'}</p>
-      </div>
-      <div>
-        <h4 className="font-semibold mb-2">KYC Documents Submitted</h4>
-        <ul className="list-disc list-inside text-muted-foreground space-y-1">
-            {application.organizerType === 'individual' ? (
-                <>
-                    <li>PAN Card: <DocumentLink fileName={application.panCard} /></li>
-                    <li>ID Proof: <DocumentLink fileName={application.idProof} /></li>
-                    <li>Bank Statement: <DocumentLink fileName={application.bankStatement} /></li>
-                </>
-            ) : (
-                <>
-                    <li>Business PAN: <DocumentLink fileName={application.businessPan} /></li>
-                    <li>GST Certificate: <DocumentLink fileName={application.gstCertificate} /></li>
-                    <li>Business Registration: <DocumentLink fileName={application.businessRegistration} /></li>
-                    <li>Bank Statement: <DocumentLink fileName={application.bankStatement} /></li>
-                </>
-            )}
-        </ul>
-      </div>
-       <Separator className="my-4"/>
-        <Button variant="outline">View Onboarding Agreement</Button>
-    </div>
-  )
+    )
 }
 
 
 export default function OrganizerSettingsPage() {
     const { user } = useAuth();
     const { toast } = useToast();
-    const { commissionRate, organizers, setOrganizers } = useMockData();
     const fileInputRef = useRef<HTMLInputElement>(null);
-
-    const currentOrganizer = useMemo(() => {
-        if (!user || !user.organizerId) return null;
-        return organizers[user.organizerId] || null;
-    }, [user, organizers]);
-    
-    // State is now only for fields that can be edited.
+    const [currentOrganizer, setCurrentOrganizer] = useState<any>(null);
+    const [loading, setLoading] = useState(true);
+    const [commissionRate, setCommissionRate] = useState(10);
     const [publicBio, setPublicBio] = useState("");
-    
-    // Use useEffect to set initial state once the currentOrganizer is loaded.
+    const [saving, setSaving] = useState(false);
+
     useEffect(() => {
-        if (currentOrganizer) {
-            setPublicBio(currentOrganizer.bio || "");
-        }
-    }, [currentOrganizer]);
-
-
-    const organizerAvatar = PlaceHolderImages.find((p) => p.id === currentOrganizer?.avatar);
-
-    const handleSaveChanges = () => {
-        if (!currentOrganizer) return;
-        setOrganizers(prev => ({
-            ...prev,
-            [currentOrganizer.id]: {
-                ...currentOrganizer,
-                bio: publicBio, // Only update the bio
+        async function fetchData() {
+            if (!user?.organizerId) {
+                setLoading(false);
+                return;
             }
-        }));
-        toast({
-            title: "Profile Updated",
-            description: "Your public profile bio has been saved.",
-        });
+
+            setLoading(true);
+            try {
+                const [orgResponse, settingsResponse] = await Promise.all([
+                    fetch(`/api/organizers/${user.organizerId}`, { credentials: 'include' }),
+                    fetch('/api/settings', { credentials: 'include' }),
+                ]);
+
+                if (orgResponse.ok) {
+                    const orgData = await orgResponse.json();
+                    setCurrentOrganizer(orgData.organizer);
+                    setPublicBio(orgData.organizer?.bio || "");
+                }
+
+                if (settingsResponse.ok) {
+                    const settingsData = await settingsResponse.json();
+                    setCommissionRate(settingsData.settings?.commissionRate || 10);
+                }
+            } catch (error) {
+                console.error("Failed to fetch data:", error);
+                toast({ variant: "destructive", title: "Error", description: "Failed to load organizer data." });
+            } finally {
+                setLoading(false);
+            }
+        }
+
+        fetchData();
+    }, [user?.organizerId, toast]);
+
+    const organizerAvatar = currentOrganizer?.avatar ? PlaceHolderImages.find((p) => p.id === currentOrganizer.avatar) : null;
+
+    const handleSaveChanges = async () => {
+        if (!currentOrganizer || !user?.organizerId) return;
+
+        setSaving(true);
+        try {
+            const response = await fetch(`/api/organizers/${user.organizerId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({
+                    bio: publicBio,
+                }),
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Failed to update organizer');
+            }
+
+            // Refresh organizer data
+            const orgResponse = await fetch(`/api/organizers/${user.organizerId}`, {
+                credentials: 'include',
+            });
+            if (orgResponse.ok) {
+                const orgData = await orgResponse.json();
+                setCurrentOrganizer(orgData.organizer);
+            }
+
+            toast({
+                title: "Profile Updated",
+                description: "Your public profile bio has been saved.",
+            });
+        } catch (error: any) {
+            console.error("Failed to save changes:", error);
+            toast({
+                variant: "destructive",
+                title: "Error",
+                description: error.message || "Failed to update profile. Please try again."
+            });
+        } finally {
+            setSaving(false);
+        }
     };
 
     const handleLogoChange = () => {
@@ -142,7 +193,7 @@ export default function OrganizerSettingsPage() {
                 <h1 className="text-3xl font-bold">Organizer Settings</h1>
                 <p className="text-muted-foreground">Manage your public profile, business details, and notification preferences.</p>
             </div>
-            
+
             <Card>
                 <CardHeader>
                     <CardTitle>Public Brand Profile</CardTitle>
@@ -151,15 +202,15 @@ export default function OrganizerSettingsPage() {
                 <CardContent className="space-y-6">
                     <div className="flex items-center gap-6">
                         <Avatar className="h-24 w-24">
-                           {organizerAvatar && <AvatarImage src={organizerAvatar.imageUrl} alt={currentOrganizer.name} />}
-                           <AvatarFallback className="text-3xl">{currentOrganizer.name?.charAt(0)}</AvatarFallback>
+                            {organizerAvatar && <AvatarImage src={organizerAvatar.imageUrl} alt={currentOrganizer.name} />}
+                            <AvatarFallback className="text-3xl">{currentOrganizer.name?.charAt(0)}</AvatarFallback>
                         </Avatar>
                         <div>
                             <Button onClick={() => fileInputRef.current?.click()}>Change Logo</Button>
                             <p className="text-xs text-muted-foreground mt-2">PNG, JPG, GIF up to 5MB.</p>
                         </div>
                     </div>
-                     <div className="space-y-2">
+                    <div className="space-y-2">
                         <Label htmlFor="brandName">Brand Name</Label>
                         <Input id="brandName" value={currentOrganizer.name} disabled />
                         <p className="text-xs text-muted-foreground">Your brand name cannot be changed after approval. Please contact support for assistance.</p>
@@ -170,11 +221,13 @@ export default function OrganizerSettingsPage() {
                     </div>
                 </CardContent>
                 <CardFooter>
-                    <Button onClick={handleSaveChanges}>Save Profile</Button>
+                    <Button onClick={handleSaveChanges} disabled={saving}>
+                        {saving ? "Saving..." : "Save Profile"}
+                    </Button>
                 </CardFooter>
             </Card>
 
-             <Card>
+            <Card>
                 <CardHeader>
                     <CardTitle>Application & Agreements</CardTitle>
                     <CardDescription>A read-only record of your submitted onboarding information. Contact support to make changes.</CardDescription>
@@ -184,7 +237,7 @@ export default function OrganizerSettingsPage() {
                 </CardContent>
             </Card>
 
-             <Card>
+            <Card>
                 <CardHeader>
                     <CardTitle>Payout & Commission</CardTitle>
                     <CardDescription>
@@ -192,7 +245,7 @@ export default function OrganizerSettingsPage() {
                     </CardDescription>
                 </CardHeader>
                 <CardContent>
-                     <Alert>
+                    <Alert>
                         <AlertCircle className="h-4 w-4" />
                         <AlertTitle>Payout Information</AlertTitle>
                         <AlertDescription>
@@ -201,7 +254,7 @@ export default function OrganizerSettingsPage() {
                     </Alert>
                 </CardContent>
             </Card>
-            
+
             <Card>
                 <CardHeader>
                     <CardTitle>Notification Preferences</CardTitle>
@@ -222,4 +275,4 @@ export default function OrganizerSettingsPage() {
     );
 }
 
-    
+

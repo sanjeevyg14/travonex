@@ -2,7 +2,7 @@
 "use client";
 
 import { useAuth } from "@/hooks/use-auth";
-import { useMockData } from "@/hooks/use-mock-data";
+import { useApiExperiences } from "@/hooks/use-api-experiences";
 import { useMemo } from "react";
 import type { Experience } from "@/lib/types";
 import Link from "next/link";
@@ -15,12 +15,21 @@ import { Edit, Eye, PlusCircle } from "lucide-react";
 
 export default function ManageExperiencesPage() {
     const { user } = useAuth();
-    const { experiences } = useMockData();
+    const { experiences, loading } = useApiExperiences({
+        vendorId: user?.organizerId,
+        autoFetch: !!user?.organizerId,
+    });
 
-    const organizerExperiences = useMemo(() => {
-        if (!user || !user.organizerId) return [];
-        return experiences.filter(e => e.vendor.id === user.organizerId);
-    }, [user, experiences]);
+    if (loading) {
+        return (
+            <div className="space-y-8">
+                <div>
+                    <h1 className="text-3xl font-bold">Manage My Experiences</h1>
+                    <p className="text-muted-foreground">Loading...</p>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="space-y-8">
@@ -55,12 +64,13 @@ export default function ManageExperiencesPage() {
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
-                                {organizerExperiences.length > 0 ? organizerExperiences.map(exp => (
+                                {experiences.length > 0 ? experiences.map(exp => (
                                     <TableRow key={exp.id}>
                                         <TableCell className="font-medium">{exp.title}</TableCell>
                                         <TableCell>
-                                            {/* Mock status. In a real app, this would come from the exp object */}
-                                            <Badge variant="secondary">Pending</Badge>
+                                            <Badge variant={exp.status === 'published' ? 'default' : exp.status === 'pending' ? 'secondary' : 'outline'}>
+                                                {exp.status || 'draft'}
+                                            </Badge>
                                         </TableCell>
                                         <TableCell>₹{exp.price.toLocaleString('en-IN')}</TableCell>
                                         <TableCell>{exp.location}</TableCell>

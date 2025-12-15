@@ -27,7 +27,6 @@ import {
     TableRow,
 } from "@/components/ui/table";
 import { useAuth } from "@/hooks/use-auth";
-import { useMockData } from "@/hooks/use-mock-data";
 import { PlaceHolderImages } from "@/lib/placeholder-images";
 import type { Organizer, OrganizerApplication } from "@/lib/types";
 import { Download, Search, UserCheck, UserCog, Briefcase, MoreHorizontal, Percent, FileX, Send, Activity, Eye, Loader2 } from "lucide-react";
@@ -221,8 +220,10 @@ function CommissionDialog({
 
 
 export default function AdminOrganizersPage() {
-    // Kept trips/experiences/bookings from mock data for now, but organizers is now fetched
-    const { trips, experiences, bookings, addAuditLog, commissionRate } = useMockData();
+    const [trips, setTrips] = useState<Trip[]>([]);
+    const [experiences, setExperiences] = useState<Experience[]>([]);
+    const [bookings, setBookings] = useState<Booking[]>([]);
+    const [commissionRate, setCommissionRate] = useState(10);
     const { user } = useAuth();
     const { toast } = useToast();
 
@@ -250,6 +251,45 @@ export default function AdminOrganizersPage() {
 
     useEffect(() => {
         fetchOrganizers();
+    }, []);
+
+    // Fetch trips, experiences, bookings, and settings
+    useEffect(() => {
+        async function fetchData() {
+            try {
+                // Fetch trips
+                const tripsResponse = await fetch('/api/trips', { credentials: 'include' });
+                if (tripsResponse.ok) {
+                    const tripsData = await tripsResponse.json();
+                    setTrips(tripsData.trips || []);
+                }
+
+                // Fetch experiences
+                const experiencesResponse = await fetch('/api/experiences', { credentials: 'include' });
+                if (experiencesResponse.ok) {
+                    const experiencesData = await experiencesResponse.json();
+                    setExperiences(experiencesData.experiences || []);
+                }
+
+                // Fetch bookings
+                const bookingsResponse = await fetch('/api/bookings', { credentials: 'include' });
+                if (bookingsResponse.ok) {
+                    const bookingsData = await bookingsResponse.json();
+                    setBookings(bookingsData.bookings || []);
+                }
+
+                // Fetch settings for commission rate
+                const settingsResponse = await fetch('/api/settings', { credentials: 'include' });
+                if (settingsResponse.ok) {
+                    const settingsData = await settingsResponse.json();
+                    setCommissionRate(settingsData.settings?.commissionRate || 10);
+                }
+            } catch (error) {
+                console.error("Failed to fetch admin data:", error);
+            }
+        }
+
+        fetchData();
     }, []);
 
 

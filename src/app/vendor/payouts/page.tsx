@@ -6,11 +6,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useMockData } from "@/hooks/use-mock-data";
-import { Banknote, CheckCircle, Clock, Download, ChevronRight, CreditCard, AlertCircle, BookCheck, DollarSign } from "lucide-react";
+import { Banknote, Download, ChevronRight, CreditCard, AlertCircle, BookCheck, DollarSign } from "lucide-react";
 import { useState, useMemo, useEffect } from "react";
 import type { ProcessedBatch } from "@/lib/types";
-import { isBefore, startOfToday, format } from 'date-fns';
+import { format } from 'date-fns';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
@@ -97,68 +96,38 @@ function SettlementRow({ settlement, isCollapsible }: { settlement: ProcessedBat
 
 export default function VendorPayoutsPage() {
     const { user } = useAuth();
-    const { experienceBookings, experiences, commissionRate, organizers } = useMockData();
     const [settlements, setSettlements] = useState<ProcessedBatch[]>([]);
+    const [loading, setLoading] = useState(true);
     const [activeTab, setActiveTab] = useState<'queue' | 'history'>('queue');
-    
+
     useEffect(() => {
-        if (!user?.organizerId) return;
+        async function fetchPayouts() {
+            if (!user?.organizerId) {
+                setLoading(false);
+                return;
+            }
 
-        const today = startOfToday();
-        const processedBatches: ProcessedBatch[] = [];
-        
-        const organizer = organizers[user.organizerId];
-        const vendorExperiences = experiences.filter(e => e.vendor.id === user.organizerId);
-        const vendorExperienceIds = vendorExperiences.map(e => e.id);
-        const vendorBookings = experienceBookings.filter(b => vendorExperienceIds.includes(b.experienceId));
-        
-        // Group bookings by experience and date
-        const bookingsByDate: Record<string, typeof vendorBookings> = {};
-        vendorBookings.forEach(booking => {
-             const activityDate = format(new Date(booking.activityDate), 'yyyy-MM-dd');
-             const key = `${booking.experienceId}::${activityDate}`;
-             if (!bookingsByDate[key]) {
-                 bookingsByDate[key] = [];
-             }
-             bookingsByDate[key].push(booking);
-        });
+            setLoading(true);
+            try {
+                const response = await fetch(`/api/vendor/payouts`, {
+                    credentials: 'include',
+                });
+                
+                if (!response.ok) {
+                    throw new Error('Failed to fetch payouts');
+                }
+                
+                const data = await response.json();
+                setSettlements(data.settlements || []);
+            } catch (error) {
+                console.error("Failed to fetch vendor payouts:", error);
+            } finally {
+                setLoading(false);
+            }
+        }
 
-
-        Object.entries(bookingsByDate).forEach(([key, bookings]) => {
-            const [experienceId, activityDateStr] = key.split('::');
-            const experience = vendorExperiences.find(e => e.id === experienceId);
-            if (!experience) return;
-
-            const activityDate = new Date(activityDateStr);
-            if (!isBefore(activityDate, today)) return;
-
-            const grossBaseRevenue = bookings.reduce((sum, b) => sum + (experience.price * b.participants), 0);
-            const effectiveCommissionRate = organizer?.commissionRate ?? commissionRate;
-            const commission = grossBaseRevenue * (effectiveCommissionRate / 100);
-            const netEarning = grossBaseRevenue - commission;
-
-            // Mock status for demonstration
-            let status: ProcessedBatch['status'] = netEarning > 1000 ? 'Paid' : 'Available for Payout';
-
-            processedBatches.push({
-                id: key,
-                tripTitle: experience.title,
-                batchEndDate: activityDate.toISOString(),
-                grossRevenue: grossBaseRevenue,
-                commission,
-                netEarning,
-                status,
-                utrNumber: status === 'Paid' ? `UTR${Math.floor(Math.random() * 1e12)}` : undefined,
-                successfulBookingsCount: bookings.length,
-                cancelledBookingsCount: 0,
-                successfulRevenue: grossBaseRevenue,
-                cancellationRevenue: 0,
-            });
-        });
-        
-        setSettlements(processedBatches.sort((a,b) => new Date(b.batchEndDate).getTime() - new Date(a.batchEndDate).getTime()));
-
-    }, [user, experiences, experienceBookings, commissionRate, organizers]);
+        fetchPayouts();
+    }, [user?.organizerId]);
     
     const settlementQueue = useMemo(() => settlements.filter(s => s.status === 'Available for Payout'), [settlements]);
     const payoutHistory = useMemo(() => settlements.filter(s => s.status === 'Processing' || s.status === 'Paid'), [settlements]);
@@ -235,24 +204,29 @@ export default function VendorPayoutsPage() {
                                     <TableHead className="text-right">Reference</TableHead>
                                 </TableRow>
                             </TableHeader>
-                           
-                           {currentList.length > 0 ? (
-                                currentList.map((item) => (
-                                    <SettlementRow
-                                        key={item.id}
-                                        settlement={item} 
-                                        isCollapsible={true}
-                                    />
-                                ))
-                            ) : (
-                                <TableBody>
+                            <TableBody>
+                                {loading ? (
                                     <TableRow>
-                                        <TableCell colSpan={5} className="h-24 text-center">
+                                        <TableCell colSpan={4} className="h-24 text-center">
+                                            Loading settlements...
+                                        </TableCell>
+                                    </TableRow>
+                                ) : currentList.length > 0 ? (
+                                    currentList.map((item) => (
+                                        <SettlementRow
+                                            key={item.id}
+                                            settlement={item} 
+                                            isCollapsible={true}
+                                        />
+                                    ))
+                                ) : (
+                                    <TableRow>
+                                        <TableCell colSpan={4} className="h-24 text-center">
                                             {activeTab === 'queue' ? 'All caught up! No settlements are currently pending.' : 'You have no payout history yet.'}
                                         </TableCell>
                                     </TableRow>
-                                </TableBody>
-                            )}
+                                )}
+                            </TableBody>
                         </Table>
                     </CardContent>
                 </Card>

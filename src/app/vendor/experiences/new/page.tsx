@@ -6,10 +6,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter }
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { useMockData } from "@/hooks/use-mock-data";
 import { useAuth } from "@/hooks/use-auth";
 import { useRouter } from "next/navigation";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useToast } from "@/hooks/use-toast";
 import type { Experience, LogisticsPoint } from "@/lib/types";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -26,12 +25,53 @@ const experienceCategories = [
 const difficultyLevels = ['Beginner', 'Intermediate', 'Advanced', 'All Levels'];
 
 export default function NewExperiencePage({ experienceToEdit }: { experienceToEdit?: Experience }) {
-    const { addExperience, setExperiences, experienceVendors, commissionRate } = useMockData();
     const { user } = useAuth();
     const router = useRouter();
     const { toast } = useToast();
+    const [commissionRate, setCommissionRate] = useState(10);
+    const [currentVendor, setCurrentVendor] = useState<any>(null);
+    const [loading, setLoading] = useState(true);
+    const [submitting, setSubmitting] = useState(false);
 
     const isEditMode = !!experienceToEdit;
+
+    useEffect(() => {
+        async function fetchData() {
+            if (!user?.organizerId) {
+                setLoading(false);
+                return;
+            }
+
+            setLoading(true);
+            try {
+                const [orgResponse, settingsResponse] = await Promise.all([
+                    fetch(`/api/organizers/${user.organizerId}`, { credentials: 'include' }),
+                    fetch('/api/settings', { credentials: 'include' }),
+                ]);
+
+                if (orgResponse.ok) {
+                    const orgData = await orgResponse.json();
+                    setCurrentVendor({
+                        id: orgData.organizer.id,
+                        name: orgData.organizer.name,
+                        avatar: orgData.organizer.avatar,
+                    });
+                }
+
+                if (settingsResponse.ok) {
+                    const settingsData = await settingsResponse.json();
+                    setCommissionRate(settingsData.settings?.commissionRate || 10);
+                }
+            } catch (error) {
+                console.error("Failed to fetch data:", error);
+                toast({ variant: "destructive", title: "Error", description: "Failed to load data." });
+            } finally {
+                setLoading(false);
+            }
+        }
+
+        fetchData();
+    }, [user?.organizerId, toast]);
     
     // --- FORM STATE ---
     const [title, setTitle] = useState(experienceToEdit?.title || "");
@@ -64,6 +104,8 @@ export default function NewExperiencePage({ experienceToEdit }: { experienceToEd
     const [pickupPoints, setPickupPoints] = useState<LogisticsPoint[]>(experienceToEdit?.pickupPoints || [{ location: "", time: "", address: "", mapLink: "" }]);
     const [dropoffPoints, setDropoffPoints] = useState<LogisticsPoint[]>(experienceToEdit?.dropoffPoints || [{ location: "", time: "", address: "", mapLink: "" }]);
     const [remarks, setRemarks] = useState(experienceToEdit?.remarks || "");
+    const [images, setImages] = useState<File[]>([]);
+    const [existingImages, setExistingImages] = useState<string[]>(experienceToEdit?.images || []);
     
     // --- Payout Calculation ---
     const B = useMemo(() => {
@@ -81,17 +123,10 @@ export default function NewExperiencePage({ experienceToEdit }: { experienceToEd
 
     const formatINR = (v: number) => `₹${Math.round(v).toLocaleString("en-IN")}`;
 
-
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!user?.organizerId) {
-            toast({ variant: 'destructive', title: "Error", description: "Could not identify organizer." });
-            return;
-        }
-
-        const vendor = experienceVendors[user.organizerId];
-        if (!vendor) {
-            toast({ variant: 'destructive', title: "Error", description: "Organizer profile not found." });
+        if (!user?.organizerId || !currentVendor) {
+            toast({ variant: 'destructive', title: "Error", description: "Organizer data not loaded. Please refresh the page." });
             return;
         }
         
@@ -101,49 +136,105 @@ export default function NewExperiencePage({ experienceToEdit }: { experienceToEd
             return;
         }
 
+        setSubmitting(true);
 
-        const newExperienceData: Omit<Experience, 'id' | 'slug' | 'images' | 'vendor'> = {
-            title,
-            location,
-            category: finalCategory,
-            price: Number(price),
-            isPriceTaxInclusive: false,
-            duration,
-            difficulty: difficulty as Experience['difficulty'],
-            description,
-            videoUrl, // <-- SAVE VIDEO URL
-            highlights: highlights.filter(h => h.trim() !== ""),
-            inclusions: inclusions.filter(i => i.trim() !== ""),
-            exclusions: exclusions.filter(e => e.trim() !== ""),
-            safetyNotes,
-            cancellationPolicy,
-            availability: {
-                type: availabilityType as 'daily' | 'weekdays' | 'weekends',
-                timeSlots: timeSlots.filter(t => t.trim() !== ''),
-            },
-            pickupPoints: pickupPoints.filter(p => p.location),
-            dropoffPoints: dropoffPoints.filter(p => p.location),
-            remarks
-        };
-        
-        if (isEditMode) {
-            setExperiences(prev => prev.map(exp => 
-                exp.id === experienceToEdit.id ? { ...exp, ...newExperienceData } : exp
-            ));
-            toast({ title: "Experience Updated!", description: "Your changes have been saved." });
-        } else {
-             const newExperience: Experience = {
-                ...newExperienceData,
-                id: `exp-${Date.now()}`,
-                slug: title.toLowerCase().replace(/\s+/g, '-'),
-                images: ['exp1'], // Mock image
-                vendor,
+        try {
+            // Upload images if provided
+            let imageUrls: string[] = [...existingImages];
+            if (images.length > 0) {
+                const uploadPromises = images.map(async (file) => {
+                    const formData = new FormData();
+                    formData.append('file', file);
+                    formData.append('folder', 'experiences');
+                    const uploadResponse = await fetch('/api/upload', {
+                        method: 'POST',
+                        credentials: 'include',
+                        body: formData,
+                    });
+                    if (uploadResponse.ok) {
+                        const uploadData = await uploadResponse.json();
+                        return uploadData.url;
+                    }
+                    return null;
+                });
+                const uploaded = await Promise.all(uploadPromises);
+                imageUrls = [...imageUrls, ...uploaded.filter(url => url !== null) as string[]];
+            }
+
+            const experienceData: any = {
+                title,
+                location,
+                category: finalCategory,
+                price: Number(price),
+                isPriceTaxInclusive: false,
+                duration,
+                difficulty: difficulty as Experience['difficulty'],
+                description,
+                videoUrl,
+                images: imageUrls,
+                highlights: highlights.filter(h => h.trim() !== ""),
+                inclusions: inclusions.filter(i => i.trim() !== ""),
+                exclusions: exclusions.filter(e => e.trim() !== ""),
+                safetyNotes,
+                cancellationPolicy,
+                availability: {
+                    type: availabilityType as 'daily' | 'weekdays' | 'weekends',
+                    timeSlots: timeSlots.filter(t => t.trim() !== ''),
+                },
+                pickupPoints: pickupPoints.filter(p => p.location),
+                dropoffPoints: dropoffPoints.filter(p => p.location),
+                remarks,
+                vendor: {
+                    id: currentVendor.id,
+                    name: currentVendor.name,
+                    avatar: currentVendor.avatar,
+                },
+                status: isEditMode ? experienceToEdit?.status : "pending",
             };
-            addExperience(newExperience);
-            toast({ title: "Experience Submitted!", description: "Your new experience is now pending review." });
-        }
         
-        router.push("/vendor/dashboard");
+            if (isEditMode && experienceToEdit) {
+                // Update existing experience
+                const response = await fetch(`/api/experiences/${experienceToEdit.id}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify(experienceData),
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || 'Failed to update experience');
+                }
+
+                toast({ title: "Experience Updated!", description: "Your changes have been saved." });
+            } else {
+                // Create new experience
+                const response = await fetch('/api/experiences', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify(experienceData),
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || 'Failed to create experience');
+                }
+
+                toast({ title: "Experience Submitted!", description: "Your new experience is now pending review." });
+            }
+            
+            router.push("/vendor/dashboard");
+        } catch (error: any) {
+            console.error("Experience submission failed:", error);
+            toast({
+                variant: "destructive",
+                title: "Error",
+                description: error.message || "Failed to save experience. Please try again."
+            });
+        } finally {
+            setSubmitting(false);
+        }
     };
 
     const handleListChange = (list: string[], setList: React.Dispatch<React.SetStateAction<string[]>>, index: number, value: string) => {
@@ -269,13 +360,14 @@ export default function NewExperiencePage({ experienceToEdit }: { experienceToEd
                         </CardHeader>
                         <CardContent className="space-y-4">
                             <div className="space-y-2">
-                                <Label htmlFor="cover-image">Cover Image</Label>
-                                <Input id="cover-image" type="file" accept="image/*" />
-                                <p className="text-xs text-muted-foreground">This is the main image shown in listings.</p>
-                            </div>
-                            <div className="space-y-2">
                                 <Label htmlFor="gallery-images">Gallery Images</Label>
-                                <Input id="gallery-images" type="file" multiple accept="image/*" />
+                                <Input 
+                                    id="gallery-images" 
+                                    type="file" 
+                                    multiple 
+                                    accept="image/*" 
+                                    onChange={(e) => setImages(Array.from(e.target.files || []))}
+                                />
                                 <p className="text-xs text-muted-foreground">Upload multiple images to showcase the experience.</p>
                             </div>
                              <div className="space-y-2">
@@ -400,7 +492,9 @@ export default function NewExperiencePage({ experienceToEdit }: { experienceToEd
                     </div>
                 </CardContent>
                 <CardFooter className="flex justify-end">
-                    <Button type="submit">{isEditMode ? 'Save Changes' : 'Submit for Review'}</Button>
+                    <Button type="submit" disabled={submitting || loading}>
+                        {submitting ? "Saving..." : isEditMode ? "Update Experience" : "Submit for Review"}
+                    </Button>
                 </CardFooter>
             </Card>
         </form>

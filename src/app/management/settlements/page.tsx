@@ -8,9 +8,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
-import { useMockData } from "@/hooks/use-mock-data";
 import { Banknote, CheckCircle, Clock, Download, ChevronRight, FileUp, CircleUser, Phone, BookCheck, AlertCircle } from "lucide-react";
 import { useState, useMemo, useEffect } from "react";
+import type { Booking } from "@/lib/types";
 import type { Trip, Booking, Batch, ProcessedBatch } from "@/lib/types";
 import { isBefore, startOfToday, format } from 'date-fns';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -24,11 +24,31 @@ import { Separator } from "@/components/ui/separator";
 
 function PayoutDialog({ settlement, onProcessPayout }: { settlement: ProcessedBatch, onProcessPayout: (id: string, invoiceUrl: string) => void }) {
     const [isOpen, setIsOpen] = useState(false);
-    const { bookings } = useMockData();
+    const [batchBookings, setBatchBookings] = useState<Booking[]>([]);
+    const [loading, setLoading] = useState(false);
     
     const [tripId, batchId] = settlement.id.split('::');
     
-    const batchBookings = bookings.filter(b => b.tripId === tripId && b.batchId === batchId);
+    useEffect(() => {
+        if (isOpen && tripId && batchId) {
+            async function fetchBatchBookings() {
+                setLoading(true);
+                try {
+                    const response = await fetch(`/api/bookings?tripId=${tripId}`, { credentials: 'include' });
+                    if (response.ok) {
+                        const data = await response.json();
+                        const filtered = (data.bookings || []).filter((b: Booking) => b.batchId === batchId);
+                        setBatchBookings(filtered);
+                    }
+                } catch (error) {
+                    console.error("Failed to fetch batch bookings:", error);
+                } finally {
+                    setLoading(false);
+                }
+            }
+            fetchBatchBookings();
+        }
+    }, [isOpen, tripId, batchId]);
     
     const handleConfirm = () => {
         // In a real app, you would get the URL from the file upload response.
@@ -253,78 +273,29 @@ function SettlementRow({ settlement, isCollapsible, onProcessPayout, onProcessUT
 
 export default function AdminSettlementsPage() {
     const { toast } = useToast();
-    const { trips, bookings, commissionRate, organizers } = useMockData();
     const [settlements, setSettlements] = useState<ProcessedBatch[]>([]);
+    const [loading, setLoading] = useState(true);
     const [activeTab, setActiveTab] = useState<'queue' | 'history'>('queue');
     const [openCollapsibleId, setOpenCollapsibleId] = useState<string | null>(null);
 
     useEffect(() => {
-        const today = startOfToday();
-        const allSettlements: ProcessedBatch[] = [];
+        async function fetchSettlements() {
+            setLoading(true);
+            try {
+                const response = await fetch('/api/admin/settlements', { credentials: 'include' });
+                if (!response.ok) throw new Error('Failed to fetch settlements');
+                const data = await response.json();
+                setSettlements(data.settlements || []);
+            } catch (error) {
+                console.error("Failed to fetch settlements:", error);
+                toast({ variant: "destructive", title: "Error", description: "Failed to load settlements." });
+            } finally {
+                setLoading(false);
+            }
+        }
 
-        trips.forEach(trip => {
-            (trip.batches || []).forEach(batch => {
-                const isCompleted = isBefore(new Date(batch.endDate), today);
-                if (!isCompleted) return;
-
-                const batchBookings = bookings.filter(b => b.batchId === batch.id && b.tripId === trip.id);
-                if (batchBookings.length === 0) return;
-                
-                // NEW LOGIC: Check for unresolved disputes in this batch
-                const hasOpenDispute = batchBookings.some(b => b.refundStatus === 'requested' || b.refundStatus === 'approved_by_organizer');
-                
-                // If a dispute is open, skip this batch from settlement calculation for now
-                if (hasOpenDispute) return;
-
-
-                const successfulBookings = batchBookings.filter(b => b.paymentStatus === 'Paid in Full');
-                const cancelledBookings = batchBookings.filter(b => b.paymentStatus === 'Cancelled');
-                
-                const successfulRevenue = successfulBookings.reduce((sum, b) => sum + b.totalPrice, 0);
-                const cancellationRevenue = cancelledBookings.reduce((sum, b) => sum + b.amountPaid, 0);
-
-                const grossRevenue = successfulRevenue + cancellationRevenue;
-
-                const organizer = organizers[trip.organizer.id];
-                const effectiveCommissionRate = organizer?.commissionRate ?? commissionRate;
-                const commission = grossRevenue * (effectiveCommissionRate / 100);
-
-                const netEarning = grossRevenue - commission;
-                
-                let status: ProcessedBatch['status'] = 'Available for Payout';
-                let invoiceUrl: string | undefined = undefined;
-                let utrNumber: string | undefined = undefined;
-
-                if (batch.id === 'batch-1-1') { 
-                    status = 'Paid';
-                    invoiceUrl = '/invoices/mock-invoice.pdf';
-                    utrNumber = 'HDFC1234567890';
-                } else if (batch.id === 'batch-4-2') {
-                    status = 'Processing';
-                    invoiceUrl = '/invoices/mock-invoice.pdf';
-                }
-
-                allSettlements.push({
-                    id: `${trip.id}::${batch.id}`,
-                    tripTitle: trip.title,
-                    batchEndDate: batch.endDate,
-                    grossRevenue,
-                    commission,
-                    netEarning,
-                    status,
-                    invoiceUrl,
-                    utrNumber,
-                    successfulBookingsCount: successfulBookings.length,
-                    cancelledBookingsCount: cancelledBookings.length,
-                    successfulRevenue,
-                    cancellationRevenue,
-                    organizerId: trip.organizer.id,
-                    organizerName: trip.organizer.name,
-                });
-            });
-        });
-        setSettlements(allSettlements.sort((a,b) => new Date(b.batchEndDate).getTime() - new Date(a.batchEndDate).getTime()));
-    }, [trips, bookings, commissionRate, organizers]);
+        fetchSettlements();
+    }, [toast]);
 
     const handleProcessPayout = (settlementId: string, invoiceUrl: string) => {
         setSettlements(prev => prev.map(s => {

@@ -15,18 +15,40 @@
 
 "use client";
 
-import { useMockData } from "@/hooks/use-mock-data";
+import { useState, useEffect, useMemo } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Gift, Users, IndianRupee } from "lucide-react";
 import { format } from "date-fns";
 import { Badge } from "@/components/ui/badge";
+import type { Referral } from "@/lib/types";
 
 export default function AdminReferralsPage() {
-    const { referrals } = useMockData();
+    const [referrals, setReferrals] = useState<Referral[]>([]);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        async function fetchReferrals() {
+            setLoading(true);
+            try {
+                const response = await fetch('/api/admin/referrals', { credentials: 'include' });
+                if (!response.ok) throw new Error('Failed to fetch referrals');
+                const data = await response.json();
+                setReferrals(data.referrals || []);
+            } catch (error) {
+                console.error("Failed to fetch referrals:", error);
+            } finally {
+                setLoading(false);
+            }
+        }
+
+        fetchReferrals();
+    }, []);
 
     // Calculate total bonus amount paid out from the referrals data.
-    const totalBonusAmount = referrals.reduce((sum, ref) => sum + ref.bonusAmount, 0);
+    const totalBonusAmount = useMemo(() => {
+        return referrals.reduce((sum, ref) => sum + (ref.bonusAmount || 0), 0);
+    }, [referrals]);
 
     return (
         <div className="space-y-8">
@@ -77,7 +99,11 @@ export default function AdminReferralsPage() {
                             </TableRow>
                         </TableHeader>
                         <TableBody>
-                            {referrals.map(ref => (
+                            {loading ? (
+                                <TableRow>
+                                    <TableCell colSpan={5} className="h-24 text-center">Loading referrals...</TableCell>
+                                </TableRow>
+                            ) : referrals.length > 0 ? referrals.map(ref => (
                                 <TableRow key={ref.id}>
                                     <TableCell className="font-medium">{ref.referrerName}</TableCell>
                                     <TableCell className="font-medium">{ref.referredUserName}</TableCell>
@@ -87,8 +113,7 @@ export default function AdminReferralsPage() {
                                         <Badge variant="default">{ref.status}</Badge>
                                     </TableCell>
                                 </TableRow>
-                            ))}
-                             {referrals.length === 0 && (
+                            )) : (
                                 <TableRow>
                                     <TableCell colSpan={5} className="h-24 text-center">
                                     No referral data available.

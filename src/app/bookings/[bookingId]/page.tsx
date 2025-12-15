@@ -1,27 +1,27 @@
 import { notFound } from "next/navigation";
-import { initialBookings, initialTrips } from "@/lib/data";
 import BookingDetailsClient from "./booking-details-client";
-import type { EnrichedBooking } from "@/hooks/use-user-bookings";
-
-export async function generateStaticParams() {
-  // In a real app, you might fetch only published/valid booking IDs
-  return initialBookings.map(booking => ({
-    bookingId: booking.id,
-  }));
-}
+import { apiGet } from "@/lib/api-client";
+import type { Booking, Trip } from "@/lib/types";
 
 async function getBookingData(bookingId: string) {
-    const booking = initialBookings.find(b => b.id === bookingId);
-    if (!booking) return null;
+    try {
+        const bookingData = await apiGet<{ booking: Booking }>(`/api/bookings/${bookingId}`);
+        const booking = bookingData.booking;
 
-    const trip = initialTrips.find(t => t.id === booking.tripId);
-    const batch = trip?.batches?.find(b => b.id === booking.batchId);
+        // Fetch trip details
+        const tripData = await apiGet<{ trip: Trip }>(`/api/trips/${booking.tripId}`);
+        const trip = tripData.trip;
 
-    // Return an enriched booking object similar to what the client hook was doing
-    return {
-        ...booking,
-        trip,
-        batch
+        const batch = trip.batches?.find(b => b.id === booking.batchId);
+
+        return {
+            ...booking,
+            trip,
+            batch,
+        };
+    } catch (error) {
+        console.error("Failed to fetch booking:", error);
+        return null;
     }
 }
 
@@ -32,6 +32,5 @@ export default async function BookingDetailPage({ params }: { params: { bookingI
         notFound();
     }
     
-    // Pass the server-fetched data to the client component as a prop
-    return <BookingDetailsClient booking={booking as EnrichedBooking} />;
+    return <BookingDetailsClient booking={booking} />;
 }

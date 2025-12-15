@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/hooks/use-auth";
-import { useMockData } from "@/hooks/use-mock-data";
+import { useApiTrips } from "@/hooks/use-api-trips";
 import type { Trip, Batch, Booking } from "@/lib/types";
 import { PlusCircle, ChevronDown, ChevronRight, Zap } from "lucide-react";
 import Link from "next/link";
@@ -142,26 +142,54 @@ function TripRow({ trip }: { trip: EnrichedTrip }) {
 
 
 export default function OrganizerTripsPage() {
-  const { trips, bookings } = useMockData();
   const { user } = useAuth();
-  
+  const { trips, loading: tripsLoading, fetchTrips } = useApiTrips({ 
+    organizerId: user?.organizerId,
+    autoFetch: !!user?.organizerId 
+  });
+  const [bookings, setBookings] = useState<any[]>([]);
+  const [bookingsLoading, setBookingsLoading] = useState(true);
   const [currentTab, setCurrentTab] = useState("all");
 
+  // Fetch bookings for this organizer
+  useEffect(() => {
+    async function fetchBookings() {
+      if (!user?.organizerId) {
+        setBookingsLoading(false);
+        return;
+      }
+
+      setBookingsLoading(true);
+      try {
+        const response = await fetch(`/api/bookings?organizerId=${user.organizerId}`, {
+          credentials: 'include',
+        });
+        if (!response.ok) throw new Error('Failed to fetch bookings');
+        const data = await response.json();
+        setBookings(data.bookings || []);
+      } catch (error) {
+        console.error("Failed to fetch bookings:", error);
+      } finally {
+        setBookingsLoading(false);
+      }
+    }
+
+    fetchBookings();
+  }, [user?.organizerId]);
+
   const enrichedOrganizerTrips = useMemo(() => {
-    if (!user || user.role !== 'organizer' || !user.organizerId) return [];
+    if (!user || user.role !== 'organizer' || !user.organizerId || tripsLoading || bookingsLoading) return [];
 
-    const organizerTrips = trips.filter(trip => trip.organizer.id === user.organizerId);
-
-    return organizerTrips.map(trip => {
+    return trips.map(trip => {
       const tripBookings = bookings.filter(b => b.tripId === trip.id);
       const totalBookingsCount = tripBookings.reduce((sum, b) => sum + b.numberOfTravelers, 0);
-      const totalRevenue = tripBookings.reduce((acc, b) => acc + b.amountPaid, 0);
-      const balanceDue = tripBookings.reduce((acc, b) => acc + b.balanceDue, 0);
+      const totalRevenue = tripBookings.reduce((acc, b) => acc + (b.amountPaid || 0), 0);
+      const balanceDue = tripBookings.reduce((acc, b) => acc + (b.balanceDue || 0), 0);
       
       const enrichedBatches: EnrichedBatch[] = (trip.batches || []).map(batch => {
           const batchBookings = tripBookings.filter(b => b.batchId === batch.id);
           const batchBookingsCount = batchBookings.reduce((sum, b) => sum + b.numberOfTravelers, 0);
-          const batchRevenue = batchBookings.reduce((sum, b) => sum + b.amountPaid, 0);
+          const batchRevenue = batchBookings.reduce((sum, b) => sum + (b.amountPaid || 0), 0);
           return {
             ...batch,
             bookingsCount: batchBookingsCount,
@@ -180,7 +208,7 @@ export default function OrganizerTripsPage() {
         hasLastMinuteDeal,
       };
     });
-  }, [trips, bookings, user]);
+  }, [trips, bookings, user, tripsLoading, bookingsLoading]);
 
   const filteredTrips = useMemo(() => {
     if (currentTab === 'all') return enrichedOrganizerTrips;

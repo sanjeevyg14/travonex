@@ -10,14 +10,17 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { useAuth } from "@/hooks/use-auth";
-import { useMockData } from "@/hooks/use-mock-data";
 import { useToast } from "@/hooks/use-toast";
 import { ArrowLeft, CreditCard, Loader2 } from "lucide-react";
-import type { Subscription } from "@/lib/types";
+
+declare global {
+    interface Window {
+        Razorpay: any;
+    }
+}
 
 function CheckoutForm() {
-    const { user, updateUser, loading } = useAuth();
-    const { proPriceAnnual, proPriceMonthly } = useMockData();
+    const { user, loading } = useAuth();
     const router = useRouter();
     const searchParams = useSearchParams();
     const { toast } = useToast();
@@ -25,8 +28,15 @@ function CheckoutForm() {
 
     const plan = searchParams.get('plan') || 'annual';
     const isAnnual = plan === 'annual';
-    
-    const price = isAnnual ? proPriceAnnual * 12 : proPriceMonthly;
+
+    // Pricing (should match backend)
+    const prices = {
+        monthly: 599,
+        annual: 499,
+    };
+
+    const price = isAnnual ? prices.annual : prices.monthly;
+    const planId = isAnnual ? 'pro-annual' : 'pro-monthly';
     const planName = isAnnual ? 'Travonex Pro - Annual Plan' : 'Travonex Pro - Monthly Plan';
     const billingCycle = isAnnual ? 'year' : 'month';
 
@@ -35,35 +45,118 @@ function CheckoutForm() {
             router.push(`/login?redirect=/pro/checkout?plan=${plan}`);
         }
     }, [user, loading, router, plan]);
-    
-    const handleConfirmPayment = () => {
+
+    const openRazorpayPayment = async (order: { id: string; amount: number; currency: string }) => {
+        // Load Razorpay script if not already loaded
+        if (!window.Razorpay) {
+            const script = document.createElement("script");
+            script.src = "https://checkout.razorpay.com/v1/checkout.js";
+            script.async = true;
+            await new Promise((resolve, reject) => {
+                script.onload = resolve;
+                script.onerror = reject;
+                document.body.appendChild(script);
+            });
+        }
+
+        const options = {
+            key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || "",
+            amount: order.amount,
+            currency: order.currency || "INR",
+            name: "Travonex",
+            description: planName,
+            order_id: order.id,
+            handler: async (response: any) => {
+                try {
+                    // Verify payment with backend
+                    const verifyResponse = await fetch("/api/payments/verify", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        credentials: "include",
+                        body: JSON.stringify({
+                            razorpay_order_id: response.razorpay_order_id,
+                            razorpay_payment_id: response.razorpay_payment_id,
+                            razorpay_signature: response.razorpay_signature,
+                        }),
+                    });
+
+                    const verifyData = await verifyResponse.json();
+
+                    if (!verifyResponse.ok || !verifyData.verified) {
+                        throw new Error(verifyData.error || "Payment verification failed");
+                    }
+
+                    toast({
+                        title: "Welcome to Travonex Pro!",
+                        description: "Your new benefits are now active.",
+                    });
+
+                    router.push('/pro/success');
+                } catch (error: any) {
+                    console.error("Payment verification error:", error);
+                    toast({
+                        variant: "destructive",
+                        title: "Verification Failed",
+                        description: error.message || "Failed to verify payment. Please contact support.",
+                    });
+                }
+            },
+            prefill: {
+                name: user?.name || "",
+                email: user?.email || "",
+                contact: user?.phone || "",
+            },
+            theme: { color: "#3b82f6" },
+            modal: {
+                ondismiss: () => {
+                    toast({
+                        variant: "default",
+                        title: "Payment Cancelled",
+                        description: "You can complete the payment later.",
+                    });
+                },
+            },
+        };
+
+        const razorpay = new window.Razorpay(options);
+        razorpay.open();
+    };
+
+    const handleConfirmPayment = async () => {
         if (!user) return;
         setIsProcessing(true);
 
-        // Simulate payment gateway processing
-        setTimeout(() => {
-            const newSubscription: Subscription = {
-                id: `sub_${Date.now()}`,
-                planId: `pro-${plan}`,
-                planName: planName,
-                status: 'active',
-                startDate: new Date().toISOString(),
-                endDate: new Date(new Date().setFullYear(new Date().getFullYear() + (isAnnual ? 1 : 0), new Date().getMonth() + (isAnnual ? 0 : 1))).toISOString(),
-                pricePaid: price,
+        try {
+            const response = await fetch('/api/subscriptions/create-checkout', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ planId }),
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Failed to create checkout');
+            }
+
+            const data = await response.json();
+            const order = {
+                id: data.orderId,
+                amount: data.amount,
+                currency: data.currency || "INR",
             };
 
-            updateUser({ 
-                ...user, 
-                subscriptionTier: 'pro',
-                subscriptionHistory: [...(user.subscriptionHistory || []), newSubscription],
-            });
-
+            await openRazorpayPayment(order);
+        } catch (error: any) {
+            console.error("Checkout error:", error);
             toast({
-                title: "Welcome to Travonex Pro!",
-                description: "Your new benefits are now active.",
+                variant: "destructive",
+                title: "Checkout Failed",
+                description: error.message || "Failed to initialize checkout. Please try again.",
             });
-            router.push('/pro/success');
-        }, 2000);
+        } finally {
+            setIsProcessing(false);
+        }
     };
 
     if (loading || !user) {
@@ -73,7 +166,7 @@ function CheckoutForm() {
     return (
         <div className="bg-muted/40 min-h-[calc(100vh-4rem)] py-12">
             <div className="container max-w-4xl">
-                 <Button variant="ghost" onClick={() => router.back()} className="mb-4">
+                <Button variant="ghost" onClick={() => router.back()} className="mb-4">
                     <ArrowLeft className="mr-2 h-4 w-4" />
                     Back
                 </Button>
@@ -93,7 +186,7 @@ function CheckoutForm() {
                                     <p className="font-bold text-lg">₹{price.toLocaleString('en-IN')}</p>
                                 </div>
                                 <Separator />
-                                 <div className="flex justify-between text-sm">
+                                <div className="flex justify-between text-sm">
                                     <p>Subtotal</p>
                                     <p>₹{price.toLocaleString('en-IN')}</p>
                                 </div>
@@ -117,26 +210,11 @@ function CheckoutForm() {
                                     <CreditCard />
                                     Payment Details
                                 </CardTitle>
-                                <CardDescription>This is a simulation. No real payment will be processed.</CardDescription>
+                                <CardDescription>Secure payment powered by Razorpay</CardDescription>
                             </CardHeader>
                             <CardContent className="space-y-4">
-                                <div className="space-y-2">
-                                    <Label htmlFor="card-number">Card Number</Label>
-                                    <Input id="card-number" placeholder="**** **** **** 1234" disabled/>
-                                </div>
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div className="space-y-2">
-                                        <Label htmlFor="expiry">Expiry Date</Label>
-                                        <Input id="expiry" placeholder="MM / YY" disabled/>
-                                    </div>
-                                    <div className="space-y-2">
-                                        <Label htmlFor="cvc">CVC</Label>
-                                        <Input id="cvc" placeholder="***" disabled/>
-                                    </div>
-                                </div>
-                                 <div className="space-y-2">
-                                    <Label htmlFor="name-on-card">Name on Card</Label>
-                                    <Input id="name-on-card" defaultValue={user.name} disabled/>
+                                <div className="p-4 bg-muted rounded-lg text-sm text-muted-foreground">
+                                    <p>You will be redirected to Razorpay's secure payment gateway to complete your purchase.</p>
                                 </div>
                             </CardContent>
                             <CardFooter>

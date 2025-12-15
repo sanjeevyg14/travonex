@@ -241,10 +241,12 @@ export type BlogStory = {
   slug: string;
   title: string;
   author: string;
+  authorId?: string;
   date: string;
   image: string;
   excerpt: string;
   content: string;
+  status?: 'published' | 'draft' | 'pending';
 };
 
 export type Coupon = {
@@ -330,8 +332,8 @@ export type AuditLog = {
   id: string;
   timestamp: string;
   adminName: string;
-  action: 'Trip Approved' | 'Trip Rejected' | 'Organizer Approved' | 'Organizer Rejected' | 'Organizer Agreement Sent' | 'Organizer Agreement Rejected' | 'Organizer Agreement Submitted' | 'Refund Requested' | 'Refund Approved by Organizer' | 'Refund Rejected by Organizer' | 'Refund Processed by Admin';
-  entityType: 'Trip' | 'Organizer' | 'Booking';
+  action: 'Trip Approved' | 'Trip Rejected' | 'Experience Approved' | 'Experience Rejected' | 'Organizer Approved' | 'Organizer Rejected' | 'Organizer Agreement Sent' | 'Organizer Agreement Rejected' | 'Organizer Agreement Submitted' | 'Refund Requested' | 'Refund Approved by Organizer' | 'Refund Rejected by Organizer' | 'Refund Processed by Admin';
+  entityType: 'Trip' | 'Experience' | 'Organizer' | 'Booking';
   entityId: string;
   entityName: string;
   details?: string;

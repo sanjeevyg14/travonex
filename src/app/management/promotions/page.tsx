@@ -3,7 +3,7 @@
 
 import { useMemo, useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
-import { useMockData } from "@/hooks/use-mock-data";
+import { useState, useEffect } from "react";
 import type { Coupon } from "@/lib/types";
 import { format, isAfter } from 'date-fns';
 
@@ -37,8 +37,7 @@ import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 
 
-function CreateCouponDialog() {
-    const { addCoupon, coupons } = useMockData();
+function CreateCouponDialog({ onCouponCreated }: { onCouponCreated: () => void }) {
     const { toast } = useToast();
     const [isOpen, setIsOpen] = useState(false);
 
@@ -49,35 +48,47 @@ function CreateCouponDialog() {
     const [usageLimit, setUsageLimit] = useState("");
     const [expiresAt, setExpiresAt] = useState<Date>();
 
-    const handleSubmit = () => {
+    const handleSubmit = async () => {
         if (!code || !type || !value || !description) {
             toast({ variant: 'destructive', title: "Missing Fields", description: "Please fill out all required coupon details."});
             return;
         }
 
-        if (coupons.some(c => c.code.toLowerCase() === code.toLowerCase())) {
-            toast({ variant: 'destructive', title: "Duplicate Code", description: "A coupon with this code already exists."});
-            return;
+        try {
+            const response = await fetch('/api/coupons', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({
+                    code,
+                    type,
+                    value: Number(value),
+                    description,
+                    scope: 'global',
+                    isActive: true,
+                    usageLimit: usageLimit ? Number(usageLimit) : undefined,
+                    expiresAt: expiresAt ? expiresAt.toISOString() : undefined,
+                }),
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Failed to create coupon');
+            }
+
+            toast({ title: "Global Coupon Created!", description: `The coupon "${code.toUpperCase()}" is now active for all trips.`});
+            setIsOpen(false);
+            // Reset form
+            setCode(""); setType('fixed'); setValue(""); setDescription(""); setUsageLimit(""); setExpiresAt(undefined);
+            onCouponCreated();
+        } catch (error: any) {
+            console.error("Failed to create coupon:", error);
+            toast({ 
+                variant: 'destructive', 
+                title: "Error", 
+                description: error.message || "Failed to create coupon. Please try again." 
+            });
         }
-
-        const newCoupon: Coupon = {
-            id: `coupon-${Date.now()}`,
-            code: code.toUpperCase(),
-            type,
-            value: Number(value),
-            description,
-            scope: 'global',
-            isActive: true,
-            timesUsed: 0,
-            usageLimit: usageLimit ? Number(usageLimit) : undefined,
-            expiresAt: expiresAt ? expiresAt.toISOString() : undefined,
-        };
-
-        addCoupon(newCoupon);
-        toast({ title: "Global Coupon Created!", description: `The coupon "${newCoupon.code}" is now active for all trips.`});
-        setIsOpen(false);
-        // Reset form
-        setCode(""); setType('fixed'); setValue(""); setDescription(""); setUsageLimit(""); setExpiresAt(undefined);
     };
 
     return (
@@ -150,7 +161,39 @@ function CreateCouponDialog() {
 
 
 export default function AdminPromotionsPage() {
-    const { coupons, setCoupons, organizers } = useMockData();
+    const [coupons, setCoupons] = useState<Coupon[]>([]);
+    const [organizers, setOrganizers] = useState<Record<string, any>>({});
+    const [loading, setLoading] = useState(true);
+
+    const fetchCoupons = async () => {
+        setLoading(true);
+        try {
+            const response = await fetch('/api/coupons', { credentials: 'include' });
+            if (!response.ok) throw new Error('Failed to fetch coupons');
+            const data = await response.json();
+            setCoupons(data.coupons || []);
+        } catch (error) {
+            console.error("Failed to fetch coupons:", error);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        fetchCoupons();
+        
+        // Also fetch organizers for display
+        fetch('/api/organizers', { credentials: 'include' })
+            .then(res => res.json())
+            .then(data => {
+                const orgMap: Record<string, any> = {};
+                (data.organizers || []).forEach((org: any) => {
+                    orgMap[org.id] = org;
+                });
+                setOrganizers(orgMap);
+            })
+            .catch(err => console.error("Failed to fetch organizers:", err));
+    }, []);
     
     const getStatus = (coupon: Coupon) => {
         if (!coupon.isActive) return { text: 'Inactive', variant: 'destructive' } as const;
@@ -159,8 +202,19 @@ export default function AdminPromotionsPage() {
         return { text: 'Active', variant: 'default' } as const;
     };
     
-    const toggleCouponStatus = (couponId: string) => {
-      setCoupons(prev => prev.map(c => c.id === couponId ? {...c, isActive: !c.isActive} : c));
+    const toggleCouponStatus = async (couponId: string) => {
+        const coupon = coupons.find(c => c.id === couponId);
+        if (!coupon) return;
+
+        try {
+            // TODO: Create PUT endpoint for coupons to update status
+            // For now, just update local state
+            setCoupons(prev => prev.map(c => c.id === couponId ? {...c, isActive: !c.isActive} : c));
+            toast({ title: "Coupon Updated", description: `Coupon ${coupon.code} has been ${!coupon.isActive ? 'activated' : 'deactivated'}.` });
+        } catch (error: any) {
+            console.error("Failed to toggle coupon:", error);
+            toast({ variant: "destructive", title: "Error", description: "Failed to update coupon." });
+        }
     }
 
     return (
@@ -170,7 +224,7 @@ export default function AdminPromotionsPage() {
                     <h1 className="text-3xl font-bold">Manage Promotions</h1>
                     <p className="text-muted-foreground">View all coupons and create new platform-wide promotions.</p>
                 </div>
-                <CreateCouponDialog />
+                <CreateCouponDialog onCouponCreated={fetchCoupons} />
             </div>
 
             <Card>

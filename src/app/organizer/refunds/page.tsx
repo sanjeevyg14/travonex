@@ -2,7 +2,7 @@
 
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -20,7 +20,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useAuth } from "@/hooks/use-auth";
-import { useMockData } from "@/hooks/use-mock-data";
 import type { Booking } from "@/lib/types";
 import { format } from "date-fns";
 import { Check, RotateCcw, X, Search } from "lucide-react";
@@ -34,65 +33,157 @@ import { Badge } from "@/components/ui/badge";
 
 export default function OrganizerRefundsPage() {
   const { user } = useAuth();
-  const { bookings, approveRefund, rejectRefund } = useMockData();
-  const [actionTarget, setActionTarget] = useState<{booking: Booking, type: 'approve' | 'reject'} | null>(null);
+  const [bookings, setBookings] = useState<Booking[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [actionTarget, setActionTarget] = useState<{ booking: Booking, type: 'approve' | 'reject' } | null>(null);
   const [remarks, setRemarks] = useState("");
   const [approvedAmount, setApprovedAmount] = useState<number | string>("");
   const { toast } = useToast();
   const [searchTerm, setSearchTerm] = useState("");
 
+  useEffect(() => {
+    async function fetchBookings() {
+      if (!user?.organizerId) {
+        setLoading(false);
+        return;
+      }
+
+      setLoading(true);
+      try {
+        const response = await fetch(`/api/bookings?organizerId=${user.organizerId}`, {
+          credentials: 'include',
+        });
+        if (!response.ok) throw new Error('Failed to fetch bookings');
+        const data = await response.json();
+        setBookings(data.bookings || []);
+      } catch (error) {
+        console.error("Failed to fetch bookings:", error);
+        toast({ variant: "destructive", title: "Error", description: "Failed to load bookings." });
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    fetchBookings();
+  }, [user?.organizerId, toast]);
 
   const { pendingRefunds, historicalRefunds } = useMemo(() => {
-    if (!user || user.role !== "organizer" || !user.organizerId) {
+    if (!user || user.role !== "organizer" || !user.organizerId || loading) {
       return { pendingRefunds: [], historicalRefunds: [] };
     }
-    const organizerBookings = bookings.filter(b => b.organizerId === user.organizerId);
+    const organizerBookings = bookings.filter(b => {
+      // Check if booking belongs to organizer via trip
+      return true; // We're already filtering by organizerId in the API call
+    });
 
     const pending = organizerBookings.filter(b => b.refundStatus === "requested");
     const history = organizerBookings.filter(b => b.refundStatus && b.refundStatus !== 'requested' && b.refundStatus !== 'none');
-    
+
     return { pendingRefunds: pending, historicalRefunds: history };
-  }, [bookings, user]);
-  
+  }, [bookings, user, loading]);
+
   const filteredHistoricalRefunds = useMemo(() => {
     if (!searchTerm) return historicalRefunds;
     const searchLower = searchTerm.toLowerCase();
-    return historicalRefunds.filter(b => 
+    return historicalRefunds.filter(b =>
       b.travelerName.toLowerCase().includes(searchLower) ||
       b.tripTitle.toLowerCase().includes(searchLower)
     );
   }, [historicalRefunds, searchTerm]);
 
-  const handleAction = () => {
+  const handleAction = async () => {
     if (!actionTarget) return;
 
     const { booking, type } = actionTarget;
 
     if (type === 'reject') {
       if (!remarks.trim()) {
-        toast({ variant: 'destructive', title: "Remarks are required for rejection."});
+        toast({ variant: 'destructive', title: "Remarks are required for rejection." });
         return;
       }
-      rejectRefund(booking.id, remarks);
+
+      try {
+        const response = await fetch(`/api/bookings/${booking.id}/refund`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            action: 'reject',
+            reason: remarks,
+          }),
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || 'Failed to reject refund');
+        }
+
+        // Refresh bookings
+        const refreshResponse = await fetch(`/api/bookings?organizerId=${user?.organizerId}`, {
+          credentials: 'include',
+        });
+        if (refreshResponse.ok) {
+          const refreshData = await refreshResponse.json();
+          setBookings(refreshData.bookings || []);
+        }
+
+        toast({ title: "Refund Rejected", description: "The refund request has been rejected." });
+      } catch (error: any) {
+        console.error("Failed to reject refund:", error);
+        toast({ variant: "destructive", title: "Error", description: error.message || "Failed to reject refund. Please try again." });
+        return;
+      }
     } else { // approve
       const finalAmount = Number(approvedAmount);
       if (isNaN(finalAmount) || finalAmount < 0 || finalAmount > booking.amountPaid) {
-          toast({ variant: 'destructive', title: "Invalid Amount", description: `Amount must be between 0 and ${booking.amountPaid}.`});
-          return;
+        toast({ variant: 'destructive', title: "Invalid Amount", description: `Amount must be between 0 and ${booking.amountPaid}.` });
+        return;
       }
-      approveRefund(booking.id, finalAmount, remarks);
+
+      try {
+        const response = await fetch(`/api/bookings/${booking.id}/refund`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            action: 'approve',
+            approvedAmount: finalAmount,
+            remarks: remarks,
+          }),
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || 'Failed to approve refund');
+        }
+
+        // Refresh bookings
+        const refreshResponse = await fetch(`/api/bookings?organizerId=${user?.organizerId}`, {
+          credentials: 'include',
+        });
+        if (refreshResponse.ok) {
+          const refreshData = await refreshResponse.json();
+          setBookings(refreshData.bookings || []);
+        }
+
+        toast({ title: "Refund Approved", description: "The refund request has been approved and sent to admin for processing." });
+      } catch (error: any) {
+        console.error("Failed to approve refund:", error);
+        toast({ variant: "destructive", title: "Error", description: error.message || "Failed to approve refund. Please try again." });
+        return;
+      }
     }
-    
+
     // Reset and close
     setActionTarget(null);
     setRemarks("");
     setApprovedAmount("");
   };
-  
+
   const openDialog = (booking: Booking, type: 'approve' | 'reject') => {
-      setApprovedAmount(booking.amountPaid); // Default to full amount
-      setRemarks(""); // Clear previous remarks
-      setActionTarget({ booking, type });
+    setApprovedAmount(booking.amountPaid); // Default to full amount
+    setRemarks(""); // Clear previous remarks
+    setActionTarget({ booking, type });
   }
 
   const getStatusBadge = (status: Booking["refundStatus"]) => {
@@ -118,8 +209,8 @@ export default function OrganizerRefundsPage() {
           </p>
         </div>
 
-         <Tabs defaultValue="pending">
-           <Card>
+        <Tabs defaultValue="pending">
+          <Card>
             <CardHeader>
               <CardTitle>Refund Requests</CardTitle>
               <TabsList className="grid w-full grid-cols-1 md:grid-cols-2 mt-4 md:w-[400px]">
@@ -157,14 +248,14 @@ export default function OrganizerRefundsPage() {
                             </TableCell>
                             <TableCell className="text-center flex gap-2 justify-center">
                               <DialogTrigger asChild>
-                                  <Button size="sm" variant="outline" onClick={() => openDialog(booking, 'approve')}>
-                                      <Check className="mr-2 h-4 w-4" /> Approve
-                                  </Button>
+                                <Button size="sm" variant="outline" onClick={() => openDialog(booking, 'approve')}>
+                                  <Check className="mr-2 h-4 w-4" /> Approve
+                                </Button>
                               </DialogTrigger>
                               <DialogTrigger asChild>
-                                  <Button size="sm" variant="destructive" onClick={() => openDialog(booking, 'reject')}>
-                                      <X className="mr-2 h-4 w-4" /> Reject
-                                  </Button>
+                                <Button size="sm" variant="destructive" onClick={() => openDialog(booking, 'reject')}>
+                                  <X className="mr-2 h-4 w-4" /> Reject
+                                </Button>
                               </DialogTrigger>
                             </TableCell>
                           </TableRow>
@@ -184,19 +275,19 @@ export default function OrganizerRefundsPage() {
                   </div>
                 )}
               </TabsContent>
-               <TabsContent value="history">
-                 <div className="flex flex-wrap items-center gap-4 mb-4">
-                    <div className="relative w-full max-w-sm">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                        <Input 
-                            placeholder="Search by trip or traveler..." 
-                            className="pl-9"
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                        />
-                    </div>
+              <TabsContent value="history">
+                <div className="flex flex-wrap items-center gap-4 mb-4">
+                  <div className="relative w-full max-w-sm">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      placeholder="Search by trip or traveler..."
+                      className="pl-9"
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                    />
+                  </div>
                 </div>
-                 {filteredHistoricalRefunds.length > 0 ? (
+                {filteredHistoricalRefunds.length > 0 ? (
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -213,8 +304,8 @@ export default function OrganizerRefundsPage() {
                           <TableCell>{booking.tripTitle}</TableCell>
                           <TableCell>{getStatusBadge(booking.refundStatus)}</TableCell>
                           <TableCell className="text-sm text-muted-foreground italic">
-                            {booking.refundStatus === 'rejected_by_organizer' ? `Reason: ${booking.refundRejectionReason}` : 
-                            (booking.refundStatus === 'processed' ? `Processed on ${booking.refundProcessedDate ? format(new Date(booking.refundProcessedDate), "dd MMM yyyy") : 'N/A'}` : 'Awaiting admin action')}
+                            {booking.refundStatus === 'rejected_by_organizer' ? `Reason: ${booking.refundRejectionReason}` :
+                              (booking.refundStatus === 'processed' ? `Processed on ${booking.refundProcessedDate ? format(new Date(booking.refundProcessedDate), "dd MMM yyyy") : 'N/A'}` : 'Awaiting admin action')}
                           </TableCell>
                         </TableRow>
                       ))}
@@ -222,66 +313,65 @@ export default function OrganizerRefundsPage() {
                   </Table>
                 ) : (
                   <div className="text-center py-12 text-muted-foreground">
-                      <p>No historical refund data found.</p>
+                    <p>No historical refund data found.</p>
                   </div>
                 )}
               </TabsContent>
             </CardContent>
-           </Card>
+          </Card>
         </Tabs>
       </div>
 
-       {actionTarget && (
+      {actionTarget && (
         <DialogContent>
-            <DialogHeader>
-                <DialogTitle>{actionTarget.type === 'approve' ? 'Approve Refund' : 'Reject Refund'} for {actionTarget.booking.tripTitle}</DialogTitle>
-                <DialogDescription>
-                  {actionTarget.type === 'approve' 
-                    ? "Specify the amount to be refunded and add optional remarks." 
-                    : "Provide a mandatory reason for rejecting this refund request."
-                  }
-                </DialogDescription>
-            </DialogHeader>
-            <div className="py-4 space-y-4">
-                {actionTarget.type === 'approve' && (
-                    <div className="space-y-2">
-                        <Label htmlFor="refund-amount">Refund Amount (₹)</Label>
-                        <Input 
-                            id="refund-amount" 
-                            type="number"
-                            value={approvedAmount}
-                            onChange={e => setApprovedAmount(e.target.value)}
-                            max={actionTarget.booking.amountPaid}
-                        />
-                        <p className="text-xs text-muted-foreground">Max: ₹{actionTarget.booking.amountPaid.toLocaleString()}</p>
-                    </div>
-                )}
-                <div className="space-y-2">
-                    <Label htmlFor="remarks">
-                        {actionTarget.type === 'approve' ? 'Remarks (Optional)' : 'Reason for Rejection (Mandatory)'}
-                    </Label>
-                    <Textarea
-                        id="remarks"
-                        placeholder={actionTarget.type === 'approve' ? "e.g., Approved as a goodwill gesture." : "e.g., Cancellation window has passed as per the trip policy."}
-                        value={remarks}
-                        onChange={e => setRemarks(e.target.value)}
-                    />
-                </div>
+          <DialogHeader>
+            <DialogTitle>{actionTarget.type === 'approve' ? 'Approve Refund' : 'Reject Refund'} for {actionTarget.booking.tripTitle}</DialogTitle>
+            <DialogDescription>
+              {actionTarget.type === 'approve'
+                ? "Specify the amount to be refunded and add optional remarks."
+                : "Provide a mandatory reason for rejecting this refund request."
+              }
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4 space-y-4">
+            {actionTarget.type === 'approve' && (
+              <div className="space-y-2">
+                <Label htmlFor="refund-amount">Refund Amount (₹)</Label>
+                <Input
+                  id="refund-amount"
+                  type="number"
+                  value={approvedAmount}
+                  onChange={e => setApprovedAmount(e.target.value)}
+                  max={actionTarget.booking.amountPaid}
+                />
+                <p className="text-xs text-muted-foreground">Max: ₹{actionTarget.booking.amountPaid.toLocaleString()}</p>
+              </div>
+            )}
+            <div className="space-y-2">
+              <Label htmlFor="remarks">
+                {actionTarget.type === 'approve' ? 'Remarks (Optional)' : 'Reason for Rejection (Mandatory)'}
+              </Label>
+              <Textarea
+                id="remarks"
+                placeholder={actionTarget.type === 'approve' ? "e.g., Approved as a goodwill gesture." : "e.g., Cancellation window has passed as per the trip policy."}
+                value={remarks}
+                onChange={e => setRemarks(e.target.value)}
+              />
             </div>
-            <DialogFooter>
-                <Button variant="outline" onClick={() => setActionTarget(null)}>Cancel</Button>
-                <Button
-                    variant={actionTarget.type === 'reject' ? 'destructive' : 'default'}
-                    onClick={handleAction}
-                    disabled={actionTarget.type === 'reject' && !remarks.trim()}
-                >
-                    Confirm {actionTarget.type === 'approve' ? 'Approval' : 'Rejection'}
-                </Button>
-            </DialogFooter>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setActionTarget(null)}>Cancel</Button>
+            <Button
+              variant={actionTarget.type === 'reject' ? 'destructive' : 'default'}
+              onClick={handleAction}
+              disabled={actionTarget.type === 'reject' && !remarks.trim()}
+            >
+              Confirm {actionTarget.type === 'approve' ? 'Approval' : 'Rejection'}
+            </Button>
+          </DialogFooter>
         </DialogContent>
-       )}
+      )}
     </Dialog>
   );
 }
 
-    

@@ -27,18 +27,39 @@ import { useToast } from "@/hooks/use-toast";
 type ManagedBlogStory = BlogStory & { status: 'published' | 'draft' | 'pending' };
 
 export default function AdminManageStoriesPage() {
-    const { blogStories, setBlogStories: setGlobalBlogStories } = useMockData();
     const { toast } = useToast();
+    const [blogStories, setBlogStories] = useState<BlogStory[]>([]);
+    const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState("");
     const [statusFilter, setStatusFilter] = useState("all");
 
-    // Add a mock status to each story for demonstration purposes
+    useEffect(() => {
+        async function fetchStories() {
+            setLoading(true);
+            try {
+                const response = await fetch('/api/blog', { credentials: 'include' });
+                if (!response.ok) throw new Error('Failed to fetch stories');
+                const data = await response.json();
+                setBlogStories(data.stories || []);
+            } catch (error) {
+                console.error("Failed to fetch stories:", error);
+                toast({ variant: "destructive", title: "Error", description: "Failed to load stories." });
+            } finally {
+                setLoading(false);
+            }
+        }
+
+        fetchStories();
+    }, [toast]);
+
     const managedStories = useMemo((): ManagedBlogStory[] => {
-        return blogStories.map((story, index) => ({
+        if (loading) return [];
+        
+        return blogStories.map((story) => ({
             ...story,
-            status: index % 3 === 0 ? 'pending' : (index % 3 === 1 ? 'published' : 'draft'),
+            status: (story.status as 'published' | 'draft' | 'pending') || 'pending',
         }));
-    }, [blogStories]);
+    }, [blogStories, loading]);
 
     const filteredStories = useMemo(() => {
         let filtered = managedStories;
@@ -57,24 +78,62 @@ export default function AdminManageStoriesPage() {
         return filtered;
     }, [managedStories, searchTerm, statusFilter]);
 
-    const handleStatusChange = (storyId: string, newStatus: ManagedBlogStory['status']) => {
-        // This is a simplified update. In a real app, you'd update the source.
-        // For this prototype, the status is mocked, so this action is simulated with a toast.
-        const story = blogStories.find(s => s.id === storyId);
-        toast({
-            title: `Story Status Changed`,
-            description: `"${story?.title}" has been set to ${newStatus}.`,
-        });
+    const handleStatusChange = async (storyId: string, newStatus: ManagedBlogStory['status']) => {
+        try {
+            const response = await fetch('/api/blog', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ storyId, status: newStatus }),
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Failed to update story status');
+            }
+
+            // Refresh stories
+            const refreshResponse = await fetch('/api/blog', { credentials: 'include' });
+            if (refreshResponse.ok) {
+                const refreshData = await refreshResponse.json();
+                setBlogStories(refreshData.stories || []);
+            }
+
+            const story = blogStories.find(s => s.id === storyId);
+            toast({
+                title: `Story Status Changed`,
+                description: `"${story?.title}" has been set to ${newStatus}.`,
+            });
+        } catch (error: any) {
+            console.error("Failed to update story:", error);
+            toast({
+                variant: "destructive",
+                title: "Error",
+                description: error.message || "Failed to update story status. Please try again.",
+            });
+        }
     };
     
-    const handleDelete = (storyId: string) => {
-        const story = blogStories.find(s => s.id === storyId);
-        // This is a visual-only removal for the prototype
-        toast({
-            variant: "destructive",
-            title: `Story Deleted`,
-            description: `"${story?.title}" has been removed.`,
-        });
+    const handleDelete = async (storyId: string) => {
+        try {
+            // TODO: Create DELETE endpoint for blog stories
+            // For now, just update local state
+            setBlogStories(prev => prev.filter(s => s.id !== storyId));
+            
+            const story = blogStories.find(s => s.id === storyId);
+            toast({
+                variant: "destructive",
+                title: `Story Deleted`,
+                description: `"${story?.title}" has been removed.`,
+            });
+        } catch (error: any) {
+            console.error("Failed to delete story:", error);
+            toast({
+                variant: "destructive",
+                title: "Error",
+                description: "Failed to delete story. Please try again.",
+            });
+        }
     }
 
     const getStatusBadgeVariant = (status: ManagedBlogStory['status']) => {

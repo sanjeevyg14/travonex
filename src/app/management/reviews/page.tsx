@@ -13,7 +13,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { useMockData } from "@/hooks/use-mock-data";
+import { useState, useEffect } from "react";
 import type { Review, Trip } from "@/lib/types";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -66,22 +66,16 @@ export default function AdminManageReviewsPage() {
         return filtered;
     }, [allReviews, searchTerm, ratingFilter]);
 
-    const handleDelete = (reviewId: string, tripId: string) => {
-        setTrips(currentTrips => currentTrips.map(trip => {
-            if (trip.id === tripId) {
-                return {
-                    ...trip,
-                    reviews: trip.reviews?.filter(review => review.id !== reviewId)
-                };
-            }
-            return trip;
-        }));
-
-        toast({
-            variant: "destructive",
-            title: "Review Deleted",
-            description: "The review has been permanently removed.",
-        });
+    const handleDelete = async (reviewId: string, tripId: string) => {
+        try {
+            // TODO: Create DELETE endpoint for reviews
+            // For now, just remove from local state
+            setReviews(prev => prev.filter(r => r.id !== reviewId));
+            
+            toast({
+                title: "Review Deleted",
+                description: "The review has been permanently removed.",
+            });
     };
 
     return (

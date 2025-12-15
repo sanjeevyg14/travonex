@@ -2,7 +2,6 @@
 
 "use client";
 
-import { useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -20,8 +19,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { useMockData } from "@/hooks/use-mock-data";
-import type { Booking, ExperienceBooking } from "@/lib/types";
+import { useState, useEffect, useMemo } from "react";
+import type { Booking, ExperienceBooking, Organizer } from "@/lib/types";
 import { format } from "date-fns";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { RotateCcw, Globe, Activity, CreditCard, Info, Search } from "lucide-react";
@@ -53,8 +52,8 @@ function ProcessRefundDialog({
   const handleConfirm = () => {
     onConfirm(booking.id, booking.bookingType);
   };
-  
-  const title = booking.bookingType === 'trip' ? booking.tripTitle : (booking as ExperienceBooking).experienceTitle;
+
+  const title = booking.bookingType === 'trip' ? (booking as Booking).tripTitle : (booking as ExperienceBooking).experienceTitle;
   const amount = booking.approvedRefundAmount || booking.amountPaid || 0;
 
   return (
@@ -67,29 +66,29 @@ function ProcessRefundDialog({
       </DialogHeader>
       <div className="py-4 space-y-4">
         <div className="p-4 rounded-lg bg-muted/50 text-center">
-            <p className="text-sm text-muted-foreground">Approved Refund Amount</p>
-            <p className="text-3xl font-bold">₹{amount.toLocaleString('en-IN')}</p>
+          <p className="text-sm text-muted-foreground">Approved Refund Amount</p>
+          <p className="text-3xl font-bold">₹{amount.toLocaleString('en-IN')}</p>
         </div>
         <div className="space-y-2">
-            <Label>Original Payment ID</Label>
-            <div className="flex items-center gap-2 p-3 rounded-md bg-muted text-muted-foreground font-mono text-sm">
-                <CreditCard className="h-4 w-4" />
-                <span>{booking.paymentGatewayId || 'pay_mock_xxxxxxxxxx'}</span>
-            </div>
+          <Label>Original Payment ID</Label>
+          <div className="flex items-center gap-2 p-3 rounded-md bg-muted text-muted-foreground font-mono text-sm">
+            <CreditCard className="h-4 w-4" />
+            <span>{booking.paymentGatewayId || 'pay_mock_xxxxxxxxxx'}</span>
+          </div>
         </div>
-         <div className="text-xs text-muted-foreground italic space-y-1">
-            <p className="font-semibold">Organizer Remarks:</p>
-            <p>{booking.cancellationReason || 'N/A'}</p>
+        <div className="text-xs text-muted-foreground italic space-y-1">
+          <p className="font-semibold">Organizer Remarks:</p>
+          <p>{booking.cancellationReason || 'N/A'}</p>
         </div>
       </div>
       <DialogFooter>
         <DialogTrigger asChild>
-            <Button variant="outline">Cancel</Button>
+          <Button variant="outline">Cancel</Button>
         </DialogTrigger>
         <DialogTrigger asChild>
-             <Button onClick={handleConfirm}>
-                Process Refund via Gateway
-            </Button>
+          <Button onClick={handleConfirm}>
+            Process Refund via Gateway
+          </Button>
         </DialogTrigger>
       </DialogFooter>
     </DialogContent>
@@ -98,68 +97,111 @@ function ProcessRefundDialog({
 
 
 export default function AdminRefundsPage() {
-  const { bookings, experienceBookings, processRefund, processExperienceRefund, organizers } = useMockData();
+  const { toast } = useToast();
+  const [bookings, setBookings] = useState<Booking[]>([]);
+  const [experienceBookings, setExperienceBookings] = useState<ExperienceBooking[]>([]);
+  const [organizers, setOrganizers] = useState<Record<string, Organizer>>({});
+  const [loading, setLoading] = useState(true);
   const [selectedBooking, setSelectedBooking] = useState<UnifiedBooking | null>(null);
   const [historySearchTerm, setHistorySearchTerm] = useState("");
   const [historyStatusFilter, setHistoryStatusFilter] = useState("all");
   const [historyOrganizerFilter, setHistoryOrganizerFilter] = useState("all");
 
+  useEffect(() => {
+    async function fetchData() {
+      setLoading(true);
+      try {
+        // Fetch trip bookings
+        const bookingsResponse = await fetch('/api/bookings', { credentials: 'include' });
+        if (bookingsResponse.ok) {
+          const bookingsData = await bookingsResponse.json();
+          setBookings(bookingsData.bookings || []);
+        }
+
+        // Fetch experience bookings
+        const expBookingsResponse = await fetch('/api/experiences/bookings', { credentials: 'include' });
+        if (expBookingsResponse.ok) {
+          const expBookingsData = await expBookingsResponse.json();
+          setExperienceBookings(expBookingsData.bookings || []);
+        }
+
+        // Fetch organizers
+        const organizersResponse = await fetch('/api/organizers', { credentials: 'include' });
+        if (organizersResponse.ok) {
+          const organizersData = await organizersResponse.json();
+          const organizersMap: Record<string, Organizer> = {};
+          (organizersData.organizers || []).forEach((org: Organizer) => {
+            organizersMap[org.id] = org;
+          });
+          setOrganizers(organizersMap);
+        }
+      } catch (error) {
+        console.error("Failed to fetch refunds data:", error);
+        toast({ variant: "destructive", title: "Error", description: "Failed to load data." });
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    fetchData();
+  }, [toast]);
 
   const { pendingRefunds, historicalRefunds } = useMemo(() => {
+    if (loading) return { pendingRefunds: [], historicalRefunds: [] };
     const pending: UnifiedBooking[] = [];
     const history: UnifiedBooking[] = [];
-    
+
     bookings.forEach((b) => {
-        const booking = {...b, bookingType: 'trip' as const};
-        if (b.refundStatus === "approved_by_organizer") {
-            pending.push(booking);
-        } else if ( b.refundStatus && b.refundStatus !== 'none' && b.refundStatus !== 'requested') {
-            history.push(booking);
-        }
+      const booking = { ...b, bookingType: 'trip' as const };
+      if (b.refundStatus === "approved_by_organizer") {
+        pending.push(booking);
+      } else if (b.refundStatus && b.refundStatus !== 'none' && b.refundStatus !== 'requested') {
+        history.push(booking);
+      }
     });
-    
+
     experienceBookings.forEach((b) => {
-        const booking = {...b, bookingType: 'experience' as const};
-         if (b.refundStatus === "approved_by_organizer") {
-            pending.push(booking);
-        } else if ( b.refundStatus && b.refundStatus !== 'none' && b.refundStatus !== 'requested') {
-            history.push(booking);
-        }
+      const booking = { ...b, bookingType: 'experience' as const };
+      if (b.refundStatus === "approved_by_organizer") {
+        pending.push(booking);
+      } else if (b.refundStatus && b.refundStatus !== 'none' && b.refundStatus !== 'requested') {
+        history.push(booking);
+      }
     });
 
-    history.sort((a,b) => new Date(b.refundRequestDate || 0).getTime() - new Date(a.refundRequestDate || 0).getTime());
+    history.sort((a, b) => new Date(b.refundRequestDate || 0).getTime() - new Date(a.refundRequestDate || 0).getTime());
     return { pendingRefunds: pending, historicalRefunds: history };
-  }, [bookings, experienceBookings]);
-  
+  }, [bookings, experienceBookings, loading]);
+
   const filteredHistoricalRefunds = useMemo(() => {
-      let filtered = historicalRefunds;
+    let filtered = historicalRefunds;
 
-      if (historyStatusFilter !== 'all') {
-          filtered = filtered.filter(b => b.refundStatus === historyStatusFilter);
-      }
+    if (historyStatusFilter !== 'all') {
+      filtered = filtered.filter(b => b.refundStatus === historyStatusFilter);
+    }
 
-      if (historyOrganizerFilter !== 'all') {
-           filtered = filtered.filter(b => {
-             if (b.bookingType === 'trip') {
-               return (b as Booking).organizerId === historyOrganizerFilter;
-             }
-             if (b.bookingType === 'experience') {
-                // This logic needs to be adapted if experiences have organizers
-                return true; 
-             }
-             return false;
-           });
-      }
-      
-      if (historySearchTerm) {
-          const searchLower = historySearchTerm.toLowerCase();
-          filtered = filtered.filter(b => {
-              const title = b.bookingType === 'trip' ? (b as Booking).tripTitle : (b as ExperienceBooking).experienceTitle;
-              return b.travelerName.toLowerCase().includes(searchLower) || title.toLowerCase().includes(searchLower);
-          });
-      }
+    if (historyOrganizerFilter !== 'all') {
+      filtered = filtered.filter(b => {
+        if (b.bookingType === 'trip') {
+          return (b as Booking).organizerId === historyOrganizerFilter;
+        }
+        if (b.bookingType === 'experience') {
+          // This logic needs to be adapted if experiences have organizers
+          return true;
+        }
+        return false;
+      });
+    }
 
-      return filtered;
+    if (historySearchTerm) {
+      const searchLower = historySearchTerm.toLowerCase();
+      filtered = filtered.filter(b => {
+        const title = b.bookingType === 'trip' ? (b as Booking).tripTitle : (b as ExperienceBooking).experienceTitle;
+        return b.travelerName.toLowerCase().includes(searchLower) || title.toLowerCase().includes(searchLower);
+      });
+    }
+
+    return filtered;
   }, [historicalRefunds, historySearchTerm, historyStatusFilter, historyOrganizerFilter]);
 
 
@@ -177,13 +219,51 @@ export default function AdminRefundsPage() {
         return <Badge variant="outline">{status}</Badge>;
     }
   };
-  
-  const handleProcessRefund = (bookingId: string, type: 'trip' | 'experience') => {
-      if (type === 'trip') {
-          processRefund(bookingId);
-      } else {
-          processExperienceRefund(bookingId);
+
+  const handleProcessRefund = async (bookingId: string, type: 'trip' | 'experience') => {
+    try {
+      const endpoint = type === 'trip'
+        ? `/api/bookings/${bookingId}/refund`
+        : `/api/experiences/bookings/${bookingId}/refund`;
+
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ action: 'process' }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to process refund');
       }
+
+      // Refresh data by refetching
+      const [refreshBookingsRes, refreshExpBookingsRes] = await Promise.all([
+        fetch('/api/bookings', { credentials: 'include' }),
+        fetch('/api/experiences/bookings', { credentials: 'include' })
+      ]);
+
+      if (refreshBookingsRes.ok) {
+        const bookingsData = await refreshBookingsRes.json();
+        setBookings(bookingsData.bookings || []);
+      }
+
+      if (refreshExpBookingsRes.ok) {
+        const expBookingsData = await refreshExpBookingsRes.json();
+        setExperienceBookings(expBookingsData.bookings || []);
+      }
+
+      toast({ title: "Refund Processed", description: "The refund has been successfully processed." });
+      setSelectedBooking(null);
+    } catch (error: any) {
+      console.error("Failed to process refund:", error);
+      toast({
+        variant: "destructive",
+        title: "Refund Failed",
+        description: error.message || "Failed to process refund. Please try again."
+      });
+    }
   }
 
   return (
@@ -223,33 +303,34 @@ export default function AdminRefundsPage() {
                       {pendingRefunds.map((booking) => {
                         const amount = booking.approvedRefundAmount || booking.amountPaid || 0;
                         return (
-                        <TableRow key={booking.id}>
-                          <TableCell>
-                            <Badge variant="outline" className="capitalize flex items-center gap-1 w-fit">
-                                {booking.bookingType === 'trip' ? <Globe className="h-3 w-3"/> : <Activity className="h-3 w-3"/>}
+                          <TableRow key={booking.id}>
+                            <TableCell>
+                              <Badge variant="outline" className="capitalize flex items-center gap-1 w-fit">
+                                {booking.bookingType === 'trip' ? <Globe className="h-3 w-3" /> : <Activity className="h-3 w-3" />}
                                 {booking.bookingType}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>{booking.travelerName}</TableCell>
-                          <TableCell>{booking.bookingType === 'trip' ? booking.tripTitle : (booking as ExperienceBooking).experienceTitle}</TableCell>
-                          <TableCell>
-                            {booking.refundRequestDate ? format(new Date(booking.refundRequestDate), "dd MMM yyyy") : 'N/A'}
-                          </TableCell>
-                          <TableCell className="text-right font-medium">
-                            ₹{amount.toLocaleString("en-IN")}
-                          </TableCell>
-                          <TableCell className="text-center">
-                            <DialogTrigger asChild>
+                              </Badge>
+                            </TableCell>
+                            <TableCell>{booking.travelerName}</TableCell>
+                            <TableCell>{booking.bookingType === 'trip' ? (booking as Booking).tripTitle : (booking as ExperienceBooking).experienceTitle}</TableCell>
+                            <TableCell>
+                              {booking.refundRequestDate ? format(new Date(booking.refundRequestDate), "dd MMM yyyy") : 'N/A'}
+                            </TableCell>
+                            <TableCell className="text-right font-medium">
+                              ₹{amount.toLocaleString("en-IN")}
+                            </TableCell>
+                            <TableCell className="text-center">
+                              <DialogTrigger asChild>
                                 <Button
-                                    size="sm"
-                                    onClick={() => setSelectedBooking(booking)}
+                                  size="sm"
+                                  onClick={() => setSelectedBooking(booking)}
                                 >
-                                    Process Refund
+                                  Process Refund
                                 </Button>
-                            </DialogTrigger>
-                          </TableCell>
-                        </TableRow>
-                      )})}
+                              </DialogTrigger>
+                            </TableCell>
+                          </TableRow>
+                        )
+                      })}
                     </TableBody>
                   </Table>
                 ) : (
@@ -265,27 +346,27 @@ export default function AdminRefundsPage() {
                 )}
               </TabsContent>
               <TabsContent value="history">
-                 <div className="flex flex-wrap items-center gap-4 mb-4">
-                    <div className="relative w-full max-w-sm">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                        <Input 
-                            placeholder="Search by trip or traveler..." 
-                            className="pl-9"
-                            value={historySearchTerm}
-                            onChange={(e) => setHistorySearchTerm(e.target.value)}
-                        />
-                    </div>
-                     <Select value={historyStatusFilter} onValueChange={setHistoryStatusFilter}>
-                        <SelectTrigger className="w-full md:w-[180px]">
-                            <SelectValue placeholder="Filter by status" />
-                        </SelectTrigger>
-                        <SelectContent>
-                            <SelectItem value="all">All Statuses</SelectItem>
-                            <SelectItem value="processed">Processed</SelectItem>
-                            <SelectItem value="rejected_by_organizer">Rejected by Organizer</SelectItem>
-                            <SelectItem value="rejected_by_admin">Rejected by Admin</SelectItem>
-                        </SelectContent>
-                    </Select>
+                <div className="flex flex-wrap items-center gap-4 mb-4">
+                  <div className="relative w-full max-w-sm">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      placeholder="Search by trip or traveler..."
+                      className="pl-9"
+                      value={historySearchTerm}
+                      onChange={(e) => setHistorySearchTerm(e.target.value)}
+                    />
+                  </div>
+                  <Select value={historyStatusFilter} onValueChange={setHistoryStatusFilter}>
+                    <SelectTrigger className="w-full md:w-[180px]">
+                      <SelectValue placeholder="Filter by status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Statuses</SelectItem>
+                      <SelectItem value="processed">Processed</SelectItem>
+                      <SelectItem value="rejected_by_organizer">Rejected by Organizer</SelectItem>
+                      <SelectItem value="rejected_by_admin">Rejected by Admin</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
                 {filteredHistoricalRefunds.length > 0 ? (
                   <Table>
@@ -308,7 +389,7 @@ export default function AdminRefundsPage() {
                           <TableCell>{booking.bookingType === 'trip' ? (booking as Booking).tripTitle : (booking as ExperienceBooking).experienceTitle}</TableCell>
                           <TableCell>{getStatusBadge(booking.refundStatus)}</TableCell>
                           <TableCell className="text-sm text-muted-foreground italic">
-                              {booking.refundStatus === 'rejected_by_organizer' || booking.refundStatus === 'rejected_by_admin' ? `Reason: ${booking.refundRejectionReason}` : 
+                            {booking.refundStatus === 'rejected_by_organizer' || booking.refundStatus === 'rejected_by_admin' ? `Reason: ${booking.refundRejectionReason}` :
                               (booking.refundStatus === 'processed' ? `Processed on ${booking.refundProcessedDate ? format(new Date(booking.refundProcessedDate), "dd MMM yyyy") : 'N/A'} (Ref: ${booking.refundUtr})` : 'N/A')}
                           </TableCell>
                         </TableRow>
@@ -317,7 +398,7 @@ export default function AdminRefundsPage() {
                   </Table>
                 ) : (
                   <div className="text-center py-12 text-muted-foreground">
-                      <p>No historical refund data matching your filters.</p>
+                    <p>No historical refund data matching your filters.</p>
                   </div>
                 )}
               </TabsContent>

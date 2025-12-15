@@ -7,7 +7,6 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { useMockData } from "@/hooks/use-mock-data";
 import type { Trip, ItineraryItem, FAQ as TripFAQ, Batch } from "@/lib/types";
 import { useRouter } from "next/navigation";
 import { useState, useMemo, useEffect } from "react";
@@ -31,7 +30,6 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 // If the prop is absent, it renders a blank form for creating a new trip.
 export default function NewTripPage({ tripToEdit }: { tripToEdit?: Trip }) {
     // --- HOOKS ---
-    const { addTrip, setTrips, organizers, tripCategories, tripDifficulties, commissionRate, travelCities } = useMockData();
     const router = useRouter();
     const { user } = useAuth();
     const { toast } = useToast();
@@ -39,8 +37,52 @@ export default function NewTripPage({ tripToEdit }: { tripToEdit?: Trip }) {
     // Determine if the component is in edit mode based on the presence of tripToEdit.
     const isEditMode = !!tripToEdit;
 
-    // Find the current organizer from mock data based on the logged-in user's name.
-    const currentOrganizer = Object.values(organizers).find(o => o.name === user?.name) || organizers['adventure-seekers'];
+    // Fetch static data and organizer info
+    const [currentOrganizer, setCurrentOrganizer] = useState<any>(null);
+    const [tripCategories, setTripCategories] = useState<string[]>([]);
+    const [tripDifficulties, setTripDifficulties] = useState<string[]>([]);
+    const [travelCities, setTravelCities] = useState<string[]>([]);
+    const [commissionRate, setCommissionRate] = useState(10);
+    const [loading, setLoading] = useState(true);
+    const [submitting, setSubmitting] = useState(false);
+
+    useEffect(() => {
+        async function fetchData() {
+            if (!user?.organizerId) {
+                setLoading(false);
+                return;
+            }
+
+            setLoading(true);
+            try {
+                const [orgResponse, settingsResponse] = await Promise.all([
+                    fetch(`/api/organizers/${user.organizerId}`, { credentials: 'include' }),
+                    fetch('/api/settings', { credentials: 'include' }),
+                ]);
+
+                if (orgResponse.ok) {
+                    const orgData = await orgResponse.json();
+                    setCurrentOrganizer(orgData.organizer);
+                }
+
+                if (settingsResponse.ok) {
+                    const settingsData = await settingsResponse.json();
+                    const settings = settingsData.settings || {};
+                    setCommissionRate(settings.commissionRate || 10);
+                    setTripCategories(settings.tripCategories || []);
+                    setTripDifficulties(settings.tripDifficulties || []);
+                    setTravelCities(settings.travelCities || []);
+                }
+            } catch (error) {
+                console.error("Failed to fetch data:", error);
+                toast({ variant: "destructive", title: "Error", description: "Failed to load data." });
+            } finally {
+                setLoading(false);
+            }
+        }
+
+        fetchData();
+    }, [user?.organizerId, toast]);
 
     // --- MULTI-STEP WIZARD STATE ---
     const [currentStep, setCurrentStep] = useState(1);
@@ -94,7 +136,7 @@ export default function NewTripPage({ tripToEdit }: { tripToEdit?: Trip }) {
     const [difficulty, setDifficulty] = useState(tripToEdit?.difficulty || "N/A");
     const [customDifficulty, setCustomDifficulty] = useState("");
     const isCustomDifficulty = useMemo(() => {
-        if (!tripToEdit?.difficulty) return false;
+        if (!tripToEdit?.difficulty || tripDifficulties.length === 0) return false;
         // If there's a difficulty but it's not in the predefined list, it's custom.
         // Also checks if the initial value is not 'N/A'.
         return !tripDifficulties.includes(tripToEdit.difficulty) && tripToEdit.difficulty !== 'N/A';
@@ -227,8 +269,15 @@ export default function NewTripPage({ tripToEdit }: { tripToEdit?: Trip }) {
     };
     
     // --- FORM SUBMISSION ---
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+        
+        if (!currentOrganizer || !user?.organizerId) {
+            toast({ variant: "destructive", title: "Error", description: "Organizer data not loaded. Please refresh the page." });
+            return;
+        }
+
+        setSubmitting(true);
         
         const finalCategory = category === 'other' ? customCategory : category;
         let finalDifficulty: string | undefined;
@@ -245,56 +294,121 @@ export default function NewTripPage({ tripToEdit }: { tripToEdit?: Trip }) {
         if (!title || !location || !departureCity || !finalCategory || !duration || !price || !description || !shortDescription || !user) {
             toast({ variant: "destructive", title: "Missing Fields", description: "Please fill out all required basic details."});
             setCurrentStep(1);
+            setSubmitting(false);
             return;
         }
 
-        // Construct the core trip data object from the current state.
-        const tripData: Omit<Trip, 'id' | 'slug' | 'rating' | 'reviewsCount' | 'image' | 'status'> = {
-            title,
-            location,
-            departureCity,
-            category: finalCategory,
-            duration,
-            price: Number(price),
-            isPriceTaxInclusive: false, // Standardizing to pre-tax
-            description,
-            shortDescription,
-            organizer: currentOrganizer,
-            itinerary: itinerary.filter(item => item.title && item.description),
-            inclusions: inclusions.filter(item => item),
-            exclusions: exclusions.filter(item => item),
-            difficulty: finalDifficulty,
-            minAge: Number(minAge),
-            maxAge: Number(maxAge),
-            highlights: highlights.filter(item => item),
-            batches: batches.filter(batch => batch.startDate && batch.endDate),
-            cancellationPolicy,
-            faqs: faqs.filter(f => f.question && f.answer),
-            spotReservationEnabled: isSpotReservationEnabled,
-            spotReservationPercentage: isSpotReservationEnabled ? Number(spotReservationPercentage) : undefined,
-            balanceDueDays: isSpotReservationEnabled ? Number(balanceDueDays) : undefined,
-            remarks,
-        };
-
-        if (isEditMode) {
-            setTrips(prevTrips => prevTrips.map(trip => 
-                trip.id === tripToEdit.id ? { ...trip, ...tripData, status: 'pending', adminRemarks: undefined } : trip
-            ));
-            toast({ title: "Trip Resubmitted!", description: "Your trip details have been updated and sent for review." });
-        } else {
-            const newTrip: Trip = {
-                ...tripData,
-                id: `trip-${Date.now()}`,
-                slug: title.toLowerCase().replace(/\s+/g, '-'),
-                image: "trip" + (Math.floor(Math.random() * 6) + 1), // Assign random image
-                status: "pending",
-                rating: (Math.random() * (5 - 4) + 4).toFixed(1),
-                reviewsCount: Math.floor(Math.random() * 100),
-            };
-            addTrip(newTrip);
-            toast({ title: "Trip Submitted!", description: "Your new trip has been submitted for review." });
+        if (!currentOrganizer || !user?.organizerId) {
+            toast({ variant: "destructive", title: "Error", description: "Organizer data not loaded. Please refresh the page." });
+            setSubmitting(false);
+            return;
         }
-        router.push("/organizer/trips");
+
+        try {
+            // Upload images first if provided
+            let imageUrl = tripToEdit?.image || "";
+            if (image) {
+                const formData = new FormData();
+                formData.append('file', image);
+                formData.append('folder', 'trips');
+                const uploadResponse = await fetch('/api/upload', {
+                    method: 'POST',
+                    credentials: 'include',
+                    body: formData,
+                });
+                if (uploadResponse.ok) {
+                    const uploadData = await uploadResponse.json();
+                    imageUrl = uploadData.url;
+                } else {
+                    throw new Error('Failed to upload cover image');
+                }
+            }
+
+            // Upload gallery images if provided
+            let galleryUrls: string[] = tripToEdit?.gallery || [];
+            if (gallery.length > 0) {
+                const uploadPromises = gallery.map(async (file) => {
+                    const formData = new FormData();
+                    formData.append('file', file);
+                    formData.append('folder', 'trips');
+                    const uploadResponse = await fetch('/api/upload', {
+                        method: 'POST',
+                        credentials: 'include',
+                        body: formData,
+                    });
+                    if (uploadResponse.ok) {
+                        const uploadData = await uploadResponse.json();
+                        return uploadData.url;
+                    }
+                    return null;
+                });
+                const uploaded = await Promise.all(uploadPromises);
+                galleryUrls = [...galleryUrls, ...uploaded.filter(url => url !== null) as string[]];
+            }
+
+            // Construct the core trip data object
+            const finalTripData: any = {
+                title,
+                location,
+                departureCity,
+                category: finalCategory,
+                duration,
+                price: Number(price),
+                isPriceTaxInclusive: false,
+                description,
+                shortDescription,
+                organizer: {
+                    id: currentOrganizer.id,
+                    name: currentOrganizer.name,
+                    avatar: currentOrganizer.avatar,
+                },
+                image: imageUrl,
+                gallery: galleryUrls,
+            };
+
+            if (isEditMode && tripToEdit) {
+                // Update existing trip
+                const response = await fetch(`/api/trips/${tripToEdit.id}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify(finalTripData),
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || 'Failed to update trip');
+                }
+
+                toast({ title: "Trip Updated!", description: "Your trip has been updated successfully." });
+            } else {
+                // Create new trip
+                const response = await fetch('/api/trips', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify(finalTripData),
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || 'Failed to create trip');
+                }
+
+                toast({ title: "Trip Submitted!", description: "Your new trip has been submitted for review." });
+            }
+            
+            router.push("/organizer/trips");
+        } catch (error: any) {
+            console.error("Trip submission failed:", error);
+            toast({
+                variant: "destructive",
+                title: "Error",
+                description: error.message || "Failed to save trip. Please try again."
+            });
+        } finally {
+            setSubmitting(false);
+        }
     };
 
   return (

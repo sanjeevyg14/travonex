@@ -7,11 +7,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useMockData } from "@/hooks/use-mock-data";
-import { Banknote, CheckCircle, Clock, Download, ChevronRight, CreditCard, AlertCircle, BookCheck } from "lucide-react";
+import { Banknote, Download, ChevronRight, CreditCard, AlertCircle, BookCheck, DollarSign } from "lucide-react";
 import { useState, useMemo, useEffect } from "react";
 import type { ProcessedBatch } from "@/lib/types";
-import { isBefore, startOfToday, format } from 'date-fns';
+import { format } from 'date-fns';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
@@ -102,81 +101,35 @@ function SettlementRow({ settlement, isCollapsible }: { settlement: ProcessedBat
 
 export default function OrganizerPayoutsPage() {
     const { user } = useAuth();
-    const { bookings, trips, commissionRate, organizers } = useMockData();
     const [settlements, setSettlements] = useState<ProcessedBatch[]>([]);
+    const [loading, setLoading] = useState(true);
     const [activeTab, setActiveTab] = useState<'queue' | 'history'>('queue');
-    
+
     useEffect(() => {
-        if (!user?.organizerId) return;
-
-        const today = startOfToday();
-        const processedBatches: ProcessedBatch[] = [];
-        
-        const organizer = organizers[user.organizerId];
-        const organizerTrips = trips.filter(t => t.organizer.id === user.organizerId);
-
-        organizerTrips.forEach(trip => {
-            (trip.batches || []).forEach(batch => {
-                const isCompleted = isBefore(new Date(batch.endDate), today);
-                if (!isCompleted) return;
-
-                const batchBookings = bookings.filter(b => b.batchId === batch.id && b.tripId === trip.id);
-                if (batchBookings.length === 0) return;
-
-                // NEW LOGIC: Check for unresolved disputes in this batch
-                const hasOpenDispute = batchBookings.some(b => b.refundStatus === 'requested' || b.refundStatus === 'approved_by_organizer');
+        async function fetchPayouts() {
+            if (!user?.organizerId) return;
+            
+            setLoading(true);
+            try {
+                const response = await fetch(`/api/organizers/${user.organizerId}/payouts`, {
+                    credentials: 'include',
+                });
                 
-                // If a dispute is open, skip this batch from settlement calculation for now
-                if (hasOpenDispute) return;
-
-                const successfulBookings = batchBookings.filter(b => b.paymentStatus === 'Paid in Full');
-                const cancelledBookings = batchBookings.filter(b => b.paymentStatus === 'Cancelled');
-                
-                const successfulRevenue = successfulBookings.reduce((sum, b) => sum + b.totalPrice, 0);
-                const cancellationRevenue = cancelledBookings.reduce((sum, b) => sum + b.amountPaid, 0);
-
-                const grossRevenue = successfulRevenue + cancellationRevenue;
-                
-                const effectiveCommissionRate = organizer?.commissionRate ?? commissionRate;
-                const commission = grossRevenue * (effectiveCommissionRate / 100);
-
-                const netEarning = grossRevenue - commission;
-
-                let status: ProcessedBatch['status'] = 'Available for Payout';
-                let invoiceUrl: string | undefined = undefined;
-                let utrNumber: string | undefined = undefined;
-
-                // This mock data simulates different payout statuses for demonstration
-                if (batch.id === 'batch-1-1') { 
-                    status = 'Paid';
-                    invoiceUrl = '/invoices/mock-invoice.pdf';
-                    utrNumber = 'HDFC1234567890';
-                } else if (batch.id === 'batch-4-2') {
-                    status = 'Processing';
-                    invoiceUrl = '/invoices/mock-invoice.pdf';
+                if (!response.ok) {
+                    throw new Error('Failed to fetch payouts');
                 }
                 
-                processedBatches.push({
-                    id: `${trip.id}-${batch.id}`,
-                    tripTitle: trip.title,
-                    batchEndDate: batch.endDate,
-                    grossRevenue,
-                    commission,
-                    netEarning,
-                    status,
-                    invoiceUrl,
-                    utrNumber,
-                    successfulBookingsCount: successfulBookings.length,
-                    cancelledBookingsCount: cancelledBookings.length,
-                    successfulRevenue,
-                    cancellationRevenue,
-                });
-            });
-        });
-        
-        setSettlements(processedBatches.sort((a,b) => new Date(b.batchEndDate).getTime() - new Date(a.batchEndDate).getTime()));
+                const data = await response.json();
+                setSettlements(data.settlements || []);
+            } catch (error) {
+                console.error("Failed to fetch payouts:", error);
+            } finally {
+                setLoading(false);
+            }
+        }
 
-    }, [user, trips, bookings, commissionRate, organizers]);
+        fetchPayouts();
+    }, [user?.organizerId]);
     
     const settlementQueue = useMemo(() => settlements.filter(s => s.status === 'Available for Payout'), [settlements]);
     const payoutHistory = useMemo(() => settlements.filter(s => s.status === 'Processing' || s.status === 'Paid'), [settlements]);
@@ -195,7 +148,7 @@ export default function OrganizerPayoutsPage() {
                 <Card>
                     <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                         <CardTitle className="text-sm font-medium">Next Payout Amount</CardTitle>
-                        <DollarSign className="h-4 w-4 text-muted-foreground" />
+                        <Banknote className="h-4 w-4 text-muted-foreground" />
                     </CardHeader>
                     <CardContent>
                         <div className="text-2xl font-bold">₹{availableForPayout.toLocaleString('en-IN')}</div>
@@ -254,23 +207,29 @@ export default function OrganizerPayoutsPage() {
                                 </TableRow>
                             </TableHeader>
                            
-                           {currentList.length > 0 ? (
-                                currentList.map((item) => (
-                                    <SettlementRow
-                                        key={item.id}
-                                        settlement={item} 
-                                        isCollapsible={true}
-                                    />
-                                ))
-                            ) : (
-                                <TableBody>
+                            <TableBody>
+                                {loading ? (
                                     <TableRow>
-                                        <TableCell colSpan={5} className="h-24 text-center">
+                                        <TableCell colSpan={4} className="h-24 text-center">
+                                            Loading settlements...
+                                        </TableCell>
+                                    </TableRow>
+                                ) : currentList.length > 0 ? (
+                                    currentList.map((item) => (
+                                        <SettlementRow
+                                            key={item.id}
+                                            settlement={item} 
+                                            isCollapsible={true}
+                                        />
+                                    ))
+                                ) : (
+                                    <TableRow>
+                                        <TableCell colSpan={4} className="h-24 text-center">
                                             {activeTab === 'queue' ? 'All caught up! No settlements are currently pending.' : 'You have no payout history yet.'}
                                         </TableCell>
                                     </TableRow>
-                                </TableBody>
-                            )}
+                                )}
+                            </TableBody>
                         </Table>
                     </CardContent>
                 </Card>

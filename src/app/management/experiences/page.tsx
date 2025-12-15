@@ -13,35 +13,49 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useMockData } from "@/hooks/use-mock-data";
+import { useState, useEffect, useMemo } from "react";
 import { useToast } from "@/hooks/use-toast";
 import type { Experience } from "@/lib/types";
-import { useMemo, useState } from "react";
 import Link from "next/link";
 import { Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/hooks/use-auth";
 
 export default function AdminExperiencesPage() {
-  const { experiences, setExperiences, addAuditLog } = useMockData();
   const { user } = useAuth();
   const { toast } = useToast();
+  const [experiences, setExperiences] = useState<Experience[]>([]);
+  const [loading, setLoading] = useState(true);
   const [currentTab, setCurrentTab] = useState("pending");
   const [searchTerm, setSearchTerm] = useState("");
 
+  useEffect(() => {
+    async function fetchExperiences() {
+      setLoading(true);
+      try {
+        const response = await fetch('/api/experiences', { credentials: 'include' });
+        if (!response.ok) throw new Error('Failed to fetch experiences');
+        const data = await response.json();
+        setExperiences(data.experiences || []);
+      } catch (error) {
+        console.error("Failed to fetch experiences:", error);
+        toast({ variant: "destructive", title: "Error", description: "Failed to load experiences." });
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    fetchExperiences();
+  }, [toast]);
+
   const filteredExperiences = useMemo(() => {
+    if (loading) return [];
+    
     let experiencesByStatus: Experience[];
     if (currentTab === 'all') {
       experiencesByStatus = experiences;
     } else {
-      // For now, we use a mock status. Replace with experience.status when available.
-      const mockStatusMap: { [key: string]: 'published' | 'pending' | 'draft' } = {
-          'exp-scuba-goa': 'published',
-          'exp-paragliding-bir': 'published',
-          'exp-kayaking-rishikesh': 'pending',
-          'exp-jungle-safari-jim-corbett': 'draft',
-      };
-      experiencesByStatus = experiences.filter(exp => (mockStatusMap[exp.id] || 'pending') === currentTab);
+      experiencesByStatus = experiences.filter(exp => exp.status === currentTab);
     }
     
     if (searchTerm) {
@@ -49,31 +63,75 @@ export default function AdminExperiencesPage() {
     }
     
     return experiencesByStatus;
-  }, [experiences, currentTab, searchTerm]);
+  }, [experiences, currentTab, searchTerm, loading]);
 
-  const handleApprove = (experienceId: string) => {
+  const handleApprove = async (experienceId: string) => {
     const experience = experiences.find(e => e.id === experienceId);
     if (!experience || !user) return;
     
-    // In a real app, you would update the status property of the experience object.
-    // setExperiences(current => current.map(e => e.id === experienceId ? { ...e, status: 'published' } : e));
-    
-    addAuditLog({
-        adminName: user.name,
-        action: 'Trip Approved', // Using 'Trip' action for now. Could be 'Experience Approved'.
-        entityType: 'Trip',
-        entityId: experienceId,
-        entityName: experience.title,
-    });
-    toast({ title: "Experience Approved", description: "The experience is now live on the platform." });
+    try {
+      const response = await fetch(`/api/admin/experiences/${experienceId}/approve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to approve experience');
+      }
+
+      // Refresh experiences list
+      const refreshResponse = await fetch('/api/experiences', { credentials: 'include' });
+      if (refreshResponse.ok) {
+        const refreshData = await refreshResponse.json();
+        setExperiences(refreshData.experiences || []);
+      }
+
+      toast({ title: "Experience Approved", description: "The experience is now live on the platform." });
+    } catch (error: any) {
+      console.error("Failed to approve experience:", error);
+      toast({ 
+        variant: "destructive", 
+        title: "Approval Failed", 
+        description: error.message || "Failed to approve experience. Please try again." 
+      });
+    }
   };
   
-  const handleReject = (experienceId: string) => {
+  const handleReject = async (experienceId: string) => {
     const experience = experiences.find(e => e.id === experienceId);
     if (!experience || !user) return;
 
-    // Simulate rejection
-    toast({ variant: "destructive", title: "Experience Rejected", description: "The experience has been moved to drafts." });
+    try {
+      const response = await fetch(`/api/admin/experiences/${experienceId}/approve`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ remarks: 'Rejected by admin' }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to reject experience');
+      }
+
+      // Refresh experiences list
+      const refreshResponse = await fetch('/api/experiences', { credentials: 'include' });
+      if (refreshResponse.ok) {
+        const refreshData = await refreshResponse.json();
+        setExperiences(refreshData.experiences || []);
+      }
+
+      toast({ variant: "destructive", title: "Experience Rejected", description: "The experience has been moved to drafts." });
+    } catch (error: any) {
+      console.error("Failed to reject experience:", error);
+      toast({ 
+        variant: "destructive", 
+        title: "Rejection Failed", 
+        description: error.message || "Failed to reject experience. Please try again." 
+      });
+    }
   };
   
   return (
@@ -122,14 +180,20 @@ export default function AdminExperiencesPage() {
                             </TableRow>
                         </TableHeader>
                         <TableBody>
-                            {filteredExperiences.map((exp) => (
+                            {loading ? (
+                                <TableRow>
+                                    <TableCell colSpan={6} className="h-24 text-center">Loading experiences...</TableCell>
+                                </TableRow>
+                            ) : filteredExperiences.length > 0 ? filteredExperiences.map((exp) => (
                             <TableRow key={exp.id}>
                                 <TableCell className="font-medium">{exp.title}</TableCell>
                                 <TableCell>{exp.vendor.name}</TableCell>
                                 <TableCell>{exp.location}</TableCell>
                                 <TableCell>₹{exp.price.toLocaleString('en-IN')}</TableCell>
                                 <TableCell>
-                                    <Badge variant="secondary">Pending</Badge>
+                                    <Badge variant={exp.status === 'published' ? 'default' : exp.status === 'pending' ? 'secondary' : 'outline'}>
+                                        {exp.status || 'draft'}
+                                    </Badge>
                                 </TableCell>
                                 <TableCell className="flex gap-2 justify-center">
                                     <Button onClick={() => handleApprove(exp.id)} variant="outline" size="sm">Approve</Button>
@@ -139,8 +203,7 @@ export default function AdminExperiencesPage() {
                                     </Button>
                                 </TableCell>
                             </TableRow>
-                            ))}
-                            {filteredExperiences.length === 0 && (
+                            )) : (
                                 <TableRow>
                                     <TableCell colSpan={6} className="h-24 text-center">
                                     No experiences found for the current filter.

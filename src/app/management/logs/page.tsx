@@ -22,7 +22,26 @@ import Link from "next/link";
 
 
 export default function AdminAuditLogPage() {
-    const { auditLogs } = useMockData();
+    const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        async function fetchAuditLogs() {
+            setLoading(true);
+            try {
+                const response = await fetch('/api/admin/audit-logs', { credentials: 'include' });
+                if (!response.ok) throw new Error('Failed to fetch audit logs');
+                const data = await response.json();
+                setAuditLogs(data.logs || []);
+            } catch (error) {
+                console.error("Failed to fetch audit logs:", error);
+            } finally {
+                setLoading(false);
+            }
+        }
+
+        fetchAuditLogs();
+    }, []);
     const [searchTerm, setSearchTerm] = useState("");
     const [actionFilter, setActionFilter] = useState("all");
 

@@ -19,80 +19,127 @@
 
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
-import { useMockData } from "@/hooks/use-mock-data";
 import Link from "next/link";
 import { Tag, ShoppingCart, MessageSquare, Crown, Percent } from "lucide-react";
 
 export default function AdminSettingsPage() {
     const { toast } = useToast();
-    // Get the global referral bonus amount and its setter from the mock data context.
-    const { 
-        referralBonusAmount, setReferralBonusAmount, 
-        commissionRate, setCommissionRate,
-        cashbackRateStandard, setCashbackRateStandard,
-        cashbackRatePro, setCashbackRatePro,
-        proPriceMonthly, setProPriceMonthly,
-        proPriceAnnual, setProPriceAnnual,
-        proSubscriptionEnabled, setProSubscriptionEnabled,
-    } = useMockData();
-
-    // Local state for settings that are only displayed on this page.
+    const [loading, setLoading] = useState(true);
+    const [saving, setSaving] = useState(false);
+    
+    // Settings state
+    const [referralBonusAmount, setReferralBonusAmount] = useState(100);
+    const [commissionRate, setCommissionRate] = useState(10);
+    const [cashbackRateStandard, setCashbackRateStandard] = useState(5);
+    const [cashbackRatePro, setCashbackRatePro] = useState(10);
+    const [proPriceMonthly, setProPriceMonthly] = useState(599);
+    const [proPriceAnnual, setProPriceAnnual] = useState(499);
+    const [proSubscriptionEnabled, setProSubscriptionEnabled] = useState(true);
     const [aiPlannerEnabled, setAiPlannerEnabled] = useState(true);
     const [spotReservationEnabled, setSpotReservationEnabled] = useState(true);
-    // Local state for the form inputs, synchronized with the global context.
-    const [bonusInput, setBonusInput] = useState(referralBonusAmount.toString());
-    const [commissionInput, setCommissionInput] = useState(commissionRate.toString());
-    const [cashbackStandardInput, setCashbackStandardInput] = useState(cashbackRateStandard.toString());
-    const [cashbackProInput, setCashbackProInput] = useState(cashbackRatePro.toString());
-    const [proPriceMonthlyInput, setProPriceMonthlyInput] = useState(proPriceMonthly.toString());
-    const [proPriceAnnualInput, setProPriceAnnualInput] = useState(proPriceAnnual.toString());
+    
+    // Form inputs
+    const [bonusInput, setBonusInput] = useState("100");
+    const [commissionInput, setCommissionInput] = useState("10");
+    const [cashbackStandardInput, setCashbackStandardInput] = useState("5");
+    const [cashbackProInput, setCashbackProInput] = useState("10");
+    const [proPriceMonthlyInput, setProPriceMonthlyInput] = useState("599");
+    const [proPriceAnnualInput, setProPriceAnnualInput] = useState("499");
+
+    useEffect(() => {
+        async function fetchSettings() {
+            setLoading(true);
+            try {
+                const response = await fetch('/api/settings', { credentials: 'include' });
+                if (!response.ok) throw new Error('Failed to fetch settings');
+                const data = await response.json();
+                const settings = data.settings || {};
+                
+                setReferralBonusAmount(settings.referralBonusAmount || 100);
+                setCommissionRate(settings.commissionRate || 10);
+                setCashbackRateStandard(settings.cashbackRateStandard || 5);
+                setCashbackRatePro(settings.cashbackRatePro || 10);
+                setProPriceMonthly(settings.proPriceMonthly || 599);
+                setProPriceAnnual(settings.proPriceAnnual || 499);
+                setProSubscriptionEnabled(settings.proSubscriptionEnabled !== false);
+                setAiPlannerEnabled(settings.aiPlannerEnabled !== false);
+                setSpotReservationEnabled(settings.spotReservationEnabled !== false);
+                
+                setBonusInput(String(settings.referralBonusAmount || 100));
+                setCommissionInput(String(settings.commissionRate || 10));
+                setCashbackStandardInput(String(settings.cashbackRateStandard || 5));
+                setCashbackProInput(String(settings.cashbackRatePro || 10));
+                setProPriceMonthlyInput(String(settings.proPriceMonthly || 599));
+                setProPriceAnnualInput(String(settings.proPriceAnnual || 499));
+            } catch (error) {
+                console.error("Failed to fetch settings:", error);
+                toast({ variant: "destructive", title: "Error", description: "Failed to load settings." });
+            } finally {
+                setLoading(false);
+            }
+        }
+
+        fetchSettings();
+    }, [toast]);
 
 
     // --- Save Handler ---
-    const handleSaveChanges = () => {
-        // Update the global referral bonus amount in the mock data context.
-        const newBonusAmount = parseInt(bonusInput, 10);
-        if (!isNaN(newBonusAmount)) {
-            setReferralBonusAmount(newBonusAmount);
-        }
+    const handleSaveChanges = async () => {
+        setSaving(true);
+        try {
+            const settings = {
+                referralBonusAmount: parseInt(bonusInput, 10),
+                commissionRate: parseInt(commissionInput, 10),
+                cashbackRateStandard: parseInt(cashbackStandardInput, 10),
+                cashbackRatePro: parseInt(cashbackProInput, 10),
+                proPriceMonthly: parseInt(proPriceMonthlyInput, 10),
+                proPriceAnnual: parseInt(proPriceAnnualInput, 10),
+                proSubscriptionEnabled,
+                aiPlannerEnabled,
+                spotReservationEnabled,
+            };
 
-        const newCommissionRate = parseInt(commissionInput, 10);
-        if (!isNaN(newCommissionRate)) {
-            setCommissionRate(newCommissionRate);
-        }
+            const response = await fetch('/api/settings', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify(settings),
+            });
 
-        const newCashbackStandard = parseInt(cashbackStandardInput, 10);
-        if (!isNaN(newCashbackStandard)) {
-            setCashbackRateStandard(newCashbackStandard);
-        }
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Failed to save settings');
+            }
 
-        const newCashbackPro = parseInt(cashbackProInput, 10);
-        if (!isNaN(newCashbackPro)) {
-            setCashbackRatePro(newCashbackPro);
-        }
-        
-        const newProPriceMonthly = parseInt(proPriceMonthlyInput, 10);
-        if (!isNaN(newProPriceMonthly)) {
-            setProPriceMonthly(newProPriceMonthly);
-        }
+            // Update local state
+            setReferralBonusAmount(settings.referralBonusAmount);
+            setCommissionRate(settings.commissionRate);
+            setCashbackRateStandard(settings.cashbackRateStandard);
+            setCashbackRatePro(settings.cashbackRatePro);
+            setProPriceMonthly(settings.proPriceMonthly);
+            setProPriceAnnual(settings.proPriceAnnual);
 
-        const newProPriceAnnual = parseInt(proPriceAnnualInput, 10);
-        if (!isNaN(newProPriceAnnual)) {
-            setProPriceAnnual(newProPriceAnnual);
+            toast({
+                title: "Platform Settings Saved",
+                description: "Your changes have been successfully applied.",
+            });
+        } catch (error: any) {
+            console.error("Failed to save settings:", error);
+            toast({ 
+                variant: "destructive", 
+                title: "Error", 
+                description: error.message || "Failed to save settings. Please try again." 
+            });
+        } finally {
+            setSaving(false);
         }
-
-        // Provide user feedback.
-        toast({
-            title: "Platform Settings Saved",
-            description: "Your changes have been successfully applied.",
-        });
     };
 
     return (

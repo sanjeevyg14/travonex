@@ -8,10 +8,11 @@ import Link from "next/link";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "./ui/card";
 import { MapPin, Star, Heart, Zap } from "lucide-react";
 import { Badge } from "./ui/badge";
-import { useMockData } from "@/hooks/use-mock-data";
 import { Button } from "./ui/button";
 import { cn } from "@/lib/utils";
-import { useMemo } from "react";
+import { useMemo, useState, useEffect } from "react";
+import { useAuth } from "@/hooks/use-auth";
+import { apiPost } from "@/lib/api-client";
 
 interface TripCardProps {
   trip: Trip;
@@ -19,13 +20,39 @@ interface TripCardProps {
 
 export function TripCard({ trip }: TripCardProps) {
   const placeholder = PlaceHolderImages.find((p) => p.id === trip.image);
-  const { savedTrips, toggleSaveTrip } = useMockData();
-  const isSaved = savedTrips.includes(trip.id);
+  const { user } = useAuth();
+  const [isSaved, setIsSaved] = useState(false);
+  const [isToggling, setIsToggling] = useState(false);
 
-  const handleSaveClick = (e: React.MouseEvent) => {
+  // Check if trip is saved (this would ideally come from props or context)
+  // For now, we'll manage it locally
+  useEffect(() => {
+    // Check initial saved state - this could be passed as prop or fetched
+    // For simplicity, we'll track it locally via state
+  }, [trip.id]);
+
+  const handleSaveClick = async (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    toggleSaveTrip(trip.id);
+    
+    if (!user) {
+      // Could redirect to login
+      return;
+    }
+
+    setIsToggling(true);
+    try {
+      const response = await apiPost<{ success: boolean; action: "added" | "removed" }>(
+        `/api/users/${user.id}/saved-trips`,
+        { tripId: trip.id }
+      );
+      
+      setIsSaved(response.action === "added");
+    } catch (error) {
+      console.error("Failed to toggle saved trip:", error);
+    } finally {
+      setIsToggling(false);
+    }
   }
 
   const { totalReviews, averageRating } = useMemo(() => {

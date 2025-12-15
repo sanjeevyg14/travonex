@@ -14,7 +14,6 @@ import { useState } from "react";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { organizerService } from "@/services/organizer-service";
 import { Loader2 } from "lucide-react";
 
 function AgreementDialog() {
@@ -102,62 +101,60 @@ export default function OrganizerApplicationPage() {
         setIsSubmitting(true);
 
         try {
-            const baseApplication = {
-                partnerType: 'trip' as const,
-                organizerType,
-                companyName: formData.get('companyName') as string,
-                experience: formData.get('experience') as string,
-                website: formData.get('website') as string,
-                contactName: formData.get('contactName') as string,
-                contactEmail: formData.get('contactEmail') as string,
-                contactPhone: formData.get('contactPhone') as string,
-            };
+            // Generate organizer ID
+            const organizerId = `org-${user.id}`;
 
-            const files: { [key: string]: File } = {};
-            let application: OrganizerApplication;
+            // Prepare FormData with all fields
+            const submitFormData = new FormData();
+            submitFormData.append('partnerType', 'trip');
+            submitFormData.append('organizerType', organizerType);
+            submitFormData.append('companyName', formData.get('companyName') as string);
+            submitFormData.append('experience', formData.get('experience') as string);
+            submitFormData.append('website', formData.get('website') as string || '');
+            submitFormData.append('contactName', formData.get('contactName') as string);
+            submitFormData.append('contactEmail', formData.get('contactEmail') as string);
+            submitFormData.append('contactPhone', formData.get('contactPhone') as string);
+            submitFormData.append('bankAccountName', formData.get('bankAccountName') as string);
+            submitFormData.append('bankAccountNumber', formData.get('bankAccountNumber') as string);
+            submitFormData.append('bankIfscCode', formData.get('bankIfscCode') as string);
 
+            // Add files
             const bankStatement = formData.get('bankStatement') as File;
-            if (bankStatement && bankStatement.size > 0) files.bankStatement = bankStatement;
+            if (bankStatement && bankStatement.size > 0) {
+                submitFormData.append('bankStatement', bankStatement);
+            }
 
             if (organizerType === 'business') {
                 const businessPan = formData.get('businessPan') as File;
                 const gstCertificate = formData.get('gstCertificate') as File;
                 const businessRegistration = formData.get('businessRegistration') as File;
 
-                if (businessPan.size > 0) files.businessPan = businessPan;
-                if (gstCertificate.size > 0) files.gstCertificate = gstCertificate;
-                if (businessRegistration.size > 0) files.businessRegistration = businessRegistration;
-
-                application = {
-                    ...baseApplication,
-                    organizerType: 'business',
-                    // The service will replace these with URLs
-                    businessPan: businessPan.name,
-                    gstCertificate: gstCertificate.name,
-                    businessRegistration: businessRegistration.name,
-                    bankStatement: bankStatement.name,
-                };
+                if (businessPan && businessPan.size > 0) submitFormData.append('businessPan', businessPan);
+                if (gstCertificate && gstCertificate.size > 0) submitFormData.append('gstCertificate', gstCertificate);
+                if (businessRegistration && businessRegistration.size > 0) submitFormData.append('businessRegistration', businessRegistration);
             } else {
                 const panCard = formData.get('panCard') as File;
                 const idProof = formData.get('idProof') as File;
 
-                if (panCard.size > 0) files.panCard = panCard;
-                if (idProof.size > 0) files.idProof = idProof;
-
-                application = {
-                    ...baseApplication,
-                    organizerType: 'individual',
-                    panCard: panCard.name,
-                    idProof: idProof.name,
-                    bankStatement: bankStatement.name,
-                };
+                if (panCard && panCard.size > 0) submitFormData.append('panCard', panCard);
+                if (idProof && idProof.size > 0) submitFormData.append('idProof', idProof);
             }
 
-            await organizerService.submitApplication(user.id, application, files);
+            // Submit to API
+            const response = await fetch(`/api/organizers/${organizerId}/application`, {
+                method: 'POST',
+                body: submitFormData,
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Failed to submit application');
+            }
 
             // Update user context to reflect pending status immediately (optimistic UI)
             updateUser({
                 ...user,
+                organizerId,
                 organizerStatus: 'pending',
             });
 
@@ -168,12 +165,12 @@ export default function OrganizerApplicationPage() {
 
             router.push("/dashboard");
 
-        } catch (error) {
+        } catch (error: any) {
             console.error("Application error:", error);
             toast({
                 variant: "destructive",
                 title: "Submission Failed",
-                description: "There was an error submitting your application. Please try again.",
+                description: error.message || "There was an error submitting your application. Please try again.",
             });
         } finally {
             setIsSubmitting(false);

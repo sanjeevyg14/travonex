@@ -2,7 +2,7 @@
 "use client";
 
 import { notFound, useParams, useRouter } from "next/navigation";
-import { useMockData } from "@/hooks/use-mock-data";
+import { apiPost } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
@@ -13,6 +13,7 @@ import { format, isBefore, differenceInHours } from 'date-fns';
 import { Badge } from "@/components/ui/badge";
 import Link from "next/link";
 import { useAuth } from "@/hooks/use-auth";
+import { useToast } from "@/hooks/use-toast";
 import { useMemo, useState, useEffect } from "react";
 import { ReviewDialog } from "@/components/review-dialog";
 import { Review } from "@/lib/types";
@@ -22,15 +23,16 @@ import type { EnrichedBooking } from "@/hooks/use-user-bookings";
 
 export default function BookingDetailsClient({ booking: initialBooking }: { booking: EnrichedBooking }) {
     const router = useRouter();
-    const { bookings, addReview, requestRefund } = useMockData();
     const { user } = useAuth();
+    const { toast } = useToast();
     
     const [isReviewDialogOpen, setReviewDialogOpen] = useState(false);
+    const [booking, setBooking] = useState(initialBooking);
 
-    // The live booking data from the context, which will update on refund actions
-    const booking = useMemo(() => {
-        return bookings.find(b => b.id === initialBooking.id) || initialBooking;
-    }, [bookings, initialBooking]);
+    // Update booking state if initialBooking changes
+    useEffect(() => {
+        setBooking(initialBooking);
+    }, [initialBooking]);
 
     const { trip, batch } = useMemo(() => {
         return { trip: initialBooking.trip, batch: initialBooking.batch };
@@ -80,23 +82,55 @@ export default function BookingDetailsClient({ booking: initialBooking }: { book
     
     const userHasReviewed = trip.reviews?.some(r => r.author === booking.travelerName);
 
-    const handleReviewSubmit = (rating: number, comment: string) => {
+    const handleReviewSubmit = async (rating: number, comment: string) => {
       if (!booking.tripId) return;
-      const review: Review = {
-        id: `rev-${Date.now()}`,
-        tripId: booking.tripId,
-        author: booking.travelerName,
-        avatar: "user1",
-        rating,
-        comment,
-        date: new Date().toISOString(),
-      };
-      addReview(booking.tripId, review);
-      setReviewDialogOpen(false);
+      
+      try {
+        await apiPost('/api/reviews', {
+          tripId: booking.tripId,
+          rating,
+          comment,
+        });
+
+        toast({
+          title: "Review Submitted",
+          description: "Thank you for your feedback!",
+        });
+        setReviewDialogOpen(false);
+      } catch (error: any) {
+        console.error("Failed to submit review:", error);
+        toast({
+          variant: "destructive",
+          title: "Review Failed",
+          description: error.message || "Failed to submit review. Please try again.",
+        });
+      }
     };
 
-    const handleRefundRequest = () => {
-        requestRefund(booking.id, booking.travelerName, booking.tripTitle);
+    const handleRefundRequest = async () => {
+        try {
+            const response = await apiPost(`/api/bookings/${booking.id}/refund?action=request`, {
+                reason: "Requested by traveler",
+            });
+
+            setBooking(prev => ({
+                ...prev,
+                refundStatus: 'requested',
+                refundRequestDate: new Date().toISOString(),
+            }));
+
+            toast({
+                title: "Refund Requested",
+                description: "Your refund request has been submitted. The organizer will review it.",
+            });
+        } catch (error: any) {
+            console.error("Failed to request refund:", error);
+            toast({
+                variant: "destructive",
+                title: "Request Failed",
+                description: error.message || "Failed to submit refund request. Please try again.",
+            });
+        }
     }
 
     const RefundStatusAlert = () => {

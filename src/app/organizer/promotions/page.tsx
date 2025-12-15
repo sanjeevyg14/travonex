@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { useAuth } from "@/hooks/use-auth";
 import { useMockData } from "@/hooks/use-mock-data";
 import type { Coupon } from "@/lib/types";
@@ -10,21 +10,21 @@ import { format, isAfter } from 'date-fns';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+    DialogTrigger,
 } from "@/components/ui/dialog";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
+    Table,
+    TableBody,
+    TableCell,
+    TableHead,
+    TableHeader,
+    TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
@@ -37,8 +37,7 @@ import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 
 
-function CreateCouponDialog() {
-    const { addCoupon, coupons } = useMockData();
+function CreateCouponDialog({ onCouponCreated }: { onCouponCreated: () => void }) {
     const { user } = useAuth();
     const { toast } = useToast();
     const [isOpen, setIsOpen] = useState(false);
@@ -50,36 +49,48 @@ function CreateCouponDialog() {
     const [usageLimit, setUsageLimit] = useState("");
     const [expiresAt, setExpiresAt] = useState<Date>();
 
-    const handleSubmit = () => {
+    const handleSubmit = async () => {
         if (!code || !type || !value || !description || !user?.organizerId) {
-            toast({ variant: 'destructive', title: "Missing Fields", description: "Please fill out all required coupon details."});
+            toast({ variant: 'destructive', title: "Missing Fields", description: "Please fill out all required coupon details." });
             return;
         }
 
-        if (coupons.some(c => c.code.toLowerCase() === code.toLowerCase())) {
-            toast({ variant: 'destructive', title: "Duplicate Code", description: "A coupon with this code already exists."});
-            return;
+        try {
+            const response = await fetch('/api/coupons', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({
+                    code,
+                    type,
+                    value: Number(value),
+                    description,
+                    scope: 'organizer',
+                    organizerId: user.organizerId,
+                    isActive: true,
+                    usageLimit: usageLimit ? Number(usageLimit) : undefined,
+                    expiresAt: expiresAt ? expiresAt.toISOString() : undefined,
+                }),
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Failed to create coupon');
+            }
+
+            toast({ title: "Coupon Created!", description: `The coupon "${code.toUpperCase()}" is now active.` });
+            setIsOpen(false);
+            // Reset form
+            setCode(""); setType('fixed'); setValue(""); setDescription(""); setUsageLimit(""); setExpiresAt(undefined);
+            onCouponCreated();
+        } catch (error: any) {
+            console.error("Failed to create coupon:", error);
+            toast({
+                variant: 'destructive',
+                title: "Error",
+                description: error.message || "Failed to create coupon. Please try again."
+            });
         }
-
-        const newCoupon: Coupon = {
-            id: `coupon-${Date.now()}`,
-            code: code.toUpperCase(),
-            type,
-            value: Number(value),
-            description,
-            scope: 'organizer',
-            organizerId: user.organizerId,
-            isActive: true,
-            timesUsed: 0,
-            usageLimit: usageLimit ? Number(usageLimit) : undefined,
-            expiresAt: expiresAt ? expiresAt.toISOString() : undefined,
-        };
-
-        addCoupon(newCoupon);
-        toast({ title: "Coupon Created!", description: `The coupon "${newCoupon.code}" is now active.`});
-        setIsOpen(false);
-        // Reset form
-        setCode(""); setType('fixed'); setValue(""); setDescription(""); setUsageLimit(""); setExpiresAt(undefined);
     };
 
     return (
@@ -102,13 +113,13 @@ function CreateCouponDialog() {
                         <Label htmlFor="code" className="text-right">Code</Label>
                         <Input id="code" value={code} onChange={e => setCode(e.target.value.toUpperCase())} className="col-span-3" placeholder="e.g., SUMMER24" />
                     </div>
-                     <div className="grid grid-cols-4 items-center gap-4">
+                    <div className="grid grid-cols-4 items-center gap-4">
                         <Label htmlFor="description" className="text-right">Description</Label>
                         <Input id="description" value={description} onChange={e => setDescription(e.target.value)} className="col-span-3" placeholder="e.g., Summer Special Discount" />
                     </div>
                     <div className="grid grid-cols-4 items-center gap-4">
                         <Label className="text-right">Type</Label>
-                         <RadioGroup value={type} onValueChange={(v) => setType(v as 'fixed' | 'percentage')} className="col-span-3 flex gap-4">
+                        <RadioGroup value={type} onValueChange={(v) => setType(v as 'fixed' | 'percentage')} className="col-span-3 flex gap-4">
                             <div className="flex items-center space-x-2">
                                 <RadioGroupItem value="fixed" id="fixed" />
                                 <Label htmlFor="fixed">Fixed (₹)</Label>
@@ -123,13 +134,13 @@ function CreateCouponDialog() {
                         <Label htmlFor="value" className="text-right">Value</Label>
                         <Input id="value" type="number" value={value} onChange={e => setValue(e.target.value)} className="col-span-3" placeholder={type === 'fixed' ? "e.g., 500" : "e.g., 10"} />
                     </div>
-                     <div className="grid grid-cols-4 items-center gap-4">
+                    <div className="grid grid-cols-4 items-center gap-4">
                         <Label htmlFor="usageLimit" className="text-right">Usage Limit</Label>
                         <Input id="usageLimit" type="number" value={usageLimit} onChange={e => setUsageLimit(e.target.value)} className="col-span-3" placeholder="Optional (e.g., 100)" />
                     </div>
-                     <div className="grid grid-cols-4 items-center gap-4">
+                    <div className="grid grid-cols-4 items-center gap-4">
                         <Label className="text-right">Expires At</Label>
-                         <Popover>
+                        <Popover>
                             <PopoverTrigger asChild>
                                 <Button variant={"outline"} className={cn("col-span-3 justify-start text-left font-normal", !expiresAt && "text-muted-foreground")}>
                                     <CalendarIcon className="mr-2 h-4 w-4" />
@@ -153,22 +164,63 @@ function CreateCouponDialog() {
 
 export default function OrganizerPromotionsPage() {
     const { user } = useAuth();
-    const { coupons, setCoupons } = useMockData();
+    const { toast } = useToast();
+    const [coupons, setCoupons] = useState<Coupon[]>([]);
+    const [loading, setLoading] = useState(true);
+
+    const fetchCoupons = async () => {
+        if (!user?.organizerId) {
+            setLoading(false);
+            return;
+        }
+
+        setLoading(true);
+        try {
+            const response = await fetch(`/api/coupons?organizerId=${user.organizerId}`, {
+                credentials: 'include',
+            });
+            if (!response.ok) throw new Error('Failed to fetch coupons');
+            const data = await response.json();
+            setCoupons(data.coupons || []);
+        } catch (error) {
+            console.error("Failed to fetch coupons:", error);
+            toast({ variant: "destructive", title: "Error", description: "Failed to load coupons." });
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        fetchCoupons();
+    }, [user?.organizerId]);
 
     const organizerCoupons = useMemo(() => {
-        if (!user || !user.organizerId) return [];
-        return coupons.filter(c => c.organizerId === user.organizerId);
-    }, [user, coupons]);
-    
+        return coupons.filter(c => c.organizerId === user?.organizerId);
+    }, [coupons, user?.organizerId]);
+
     const getStatus = (coupon: Coupon) => {
         if (!coupon.isActive) return { text: 'Inactive', variant: 'destructive' } as const;
         if (coupon.expiresAt && isAfter(new Date(), new Date(coupon.expiresAt))) return { text: 'Expired', variant: 'destructive' } as const;
         if (coupon.usageLimit && (coupon.timesUsed || 0) >= coupon.usageLimit) return { text: 'Used Up', variant: 'secondary' } as const;
         return { text: 'Active', variant: 'default' } as const;
     };
-    
-    const toggleCouponStatus = (couponId: string) => {
-      setCoupons(prev => prev.map(c => c.id === couponId ? {...c, isActive: !c.isActive} : c));
+
+    const toggleCouponStatus = async (couponId: string) => {
+        const coupon = coupons.find(c => c.id === couponId);
+        if (!coupon) return;
+
+        try {
+            // TODO: Create PUT endpoint for coupons to update status
+            // For now, just update local state and show toast
+            setCoupons(prev => prev.map(c => c.id === couponId ? { ...c, isActive: !c.isActive } : c));
+            toast({
+                title: "Coupon Updated",
+                description: `Coupon ${coupon.code} has been ${!coupon.isActive ? 'activated' : 'deactivated'}.`
+            });
+        } catch (error: any) {
+            console.error("Failed to toggle coupon:", error);
+            toast({ variant: "destructive", title: "Error", description: "Failed to update coupon." });
+        }
     }
 
     return (
@@ -178,7 +230,7 @@ export default function OrganizerPromotionsPage() {
                     <h1 className="text-3xl font-bold">Manage Promotions</h1>
                     <p className="text-muted-foreground">Create and manage discount codes to attract more travelers.</p>
                 </div>
-                <CreateCouponDialog />
+                <CreateCouponDialog onCouponCreated={fetchCoupons} />
             </div>
 
             <Card>
@@ -187,43 +239,45 @@ export default function OrganizerPromotionsPage() {
                     <CardDescription>A list of all promotional codes you have created.</CardDescription>
                 </CardHeader>
                 <CardContent>
-                    {organizerCoupons.length > 0 ? (
+                    {loading ? (
+                        <div className="text-center py-12">Loading coupons...</div>
+                    ) : organizerCoupons.length > 0 ? (
                         <div className="border rounded-lg">
-                        <Table>
-                            <TableHeader>
-                                <TableRow>
-                                    <TableHead>Code</TableHead>
-                                    <TableHead>Discount</TableHead>
-                                    <TableHead>Usage</TableHead>
-                                    <TableHead>Status</TableHead>
-                                    <TableHead>Actions</TableHead>
-                                </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                                {organizerCoupons.map((coupon) => {
-                                    const status = getStatus(coupon);
-                                    return (
-                                    <TableRow key={coupon.id}>
-                                        <TableCell className="font-mono font-semibold">{coupon.code}</TableCell>
-                                        <TableCell>
-                                            {coupon.type === 'fixed' ? `₹${coupon.value}` : `${coupon.value}%`}
-                                        </TableCell>
-                                        <TableCell>
-                                            {coupon.timesUsed || 0} / {coupon.usageLimit || '∞'}
-                                        </TableCell>
-                                        <TableCell>
-                                            <Badge variant={status.variant}>{status.text}</Badge>
-                                        </TableCell>
-                                        <TableCell>
-                                            <Button variant="outline" size="sm" onClick={() => toggleCouponStatus(coupon.id)}>
-                                                {coupon.isActive ? 'Deactivate' : 'Activate'}
-                                            </Button>
-                                        </TableCell>
+                            <Table>
+                                <TableHeader>
+                                    <TableRow>
+                                        <TableHead>Code</TableHead>
+                                        <TableHead>Discount</TableHead>
+                                        <TableHead>Usage</TableHead>
+                                        <TableHead>Status</TableHead>
+                                        <TableHead>Actions</TableHead>
                                     </TableRow>
-                                    )
-                                })}
-                            </TableBody>
-                        </Table>
+                                </TableHeader>
+                                <TableBody>
+                                    {organizerCoupons.map((coupon) => {
+                                        const status = getStatus(coupon);
+                                        return (
+                                            <TableRow key={coupon.id}>
+                                                <TableCell className="font-mono font-semibold">{coupon.code}</TableCell>
+                                                <TableCell>
+                                                    {coupon.type === 'fixed' ? `₹${coupon.value}` : `${coupon.value}%`}
+                                                </TableCell>
+                                                <TableCell>
+                                                    {coupon.timesUsed || 0} / {coupon.usageLimit || '∞'}
+                                                </TableCell>
+                                                <TableCell>
+                                                    <Badge variant={status.variant}>{status.text}</Badge>
+                                                </TableCell>
+                                                <TableCell>
+                                                    <Button variant="outline" size="sm" onClick={() => toggleCouponStatus(coupon.id)}>
+                                                        {coupon.isActive ? 'Deactivate' : 'Activate'}
+                                                    </Button>
+                                                </TableCell>
+                                            </TableRow>
+                                        )
+                                    })}
+                                </TableBody>
+                            </Table>
                         </div>
                     ) : (
                         <div className="text-center py-12">

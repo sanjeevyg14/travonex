@@ -3,8 +3,8 @@
 "use client";
 
 import { useAuth } from "@/hooks/use-auth";
-import { useMockData } from "@/hooks/use-mock-data";
-import { useMemo, useState } from "react";
+import { useApiExperienceBookings } from "@/hooks/use-api-experience-bookings";
+import { useMemo, useState, useEffect } from "react";
 import type { ExperienceBooking } from "@/lib/types";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -24,19 +24,39 @@ import { Badge } from "@/components/ui/badge";
 
 export default function ExperienceBookingDashboard() {
     const { user } = useAuth();
-    const { experienceBookings } = useMockData();
+    const [bookings, setBookings] = useState<ExperienceBooking[]>([]);
+    const [loading, setLoading] = useState(true);
     const [selectedBooking, setSelectedBooking] = useState<ExperienceBooking | null>(null);
 
-    const organizerBookings = useMemo(() => {
-        if (!user || user.role !== 'organizer') return [];
-        // This is a placeholder; experience bookings need to be linked to an organizer/vendor
-        return experienceBookings;
-    }, [experienceBookings, user]);
+    useEffect(() => {
+        async function fetchBookings() {
+            if (!user?.organizerId) {
+                setLoading(false);
+                return;
+            }
+
+            setLoading(true);
+            try {
+                const response = await fetch(`/api/experiences/bookings?vendorId=${user.organizerId}`, {
+                    credentials: 'include',
+                });
+                if (!response.ok) throw new Error('Failed to fetch bookings');
+                const data = await response.json();
+                setBookings(data.bookings || []);
+            } catch (error) {
+                console.error("Failed to fetch experience bookings:", error);
+            } finally {
+                setLoading(false);
+            }
+        }
+
+        fetchBookings();
+    }, [user?.organizerId]);
 
     const { totalRevenue, totalBookingsCount } = useMemo(() => {
-        const revenue = organizerBookings.reduce((acc, b) => acc + b.totalPrice, 0);
-        return { totalRevenue: revenue, totalBookingsCount: organizerBookings.length };
-    }, [organizerBookings]);
+        const revenue = bookings.reduce((acc, b) => acc + b.totalPrice, 0);
+        return { totalRevenue: revenue, totalBookingsCount: bookings.length };
+    }, [bookings]);
 
     return (
         <Dialog onOpenChange={(isOpen) => !isOpen && setSelectedBooking(null)}>
@@ -82,7 +102,11 @@ export default function ExperienceBookingDashboard() {
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
-                                {organizerBookings.length > 0 ? organizerBookings.map((booking) => (
+                                {loading ? (
+                                    <TableRow>
+                                        <TableCell colSpan={6} className="text-center py-8">Loading bookings...</TableCell>
+                                    </TableRow>
+                                ) : bookings.length > 0 ? bookings.map((booking) => (
                                     <TableRow key={booking.id}>
                                         <TableCell className="font-medium">{booking.travelerName}</TableCell>
                                         <TableCell>{booking.experienceTitle}</TableCell>
